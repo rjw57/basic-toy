@@ -8,11 +8,16 @@ readme = "README.md"
 packages = [{include = "rwbasic"}]
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
+lark = "^1.1.5"
+structlog = "^23.1.0"
+numpy = "^1.25.1"
 
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.3.3"
+pytest = "^7.4.0"
+pytest-cov = "^4.1.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -26,3 +31,6 @@ profile = "black"
 
 [tool.mypy]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "--cov rwbasic --cov-report term --cov-report html"
