@@ -11,6 +11,18 @@ packages = [{include = "rwbasic"}]
 python = "^3.9"
 
 
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^3.3.3"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 99
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+ignore_missing_imports = true

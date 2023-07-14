@@ -1,0 +1,25 @@
+# Editorconfig file for cross-platform configuration of editors.
+root=true
+
+# Web-platform files
+[*.{html,css,js,jsx,ts,tsx}]
+max_line_length=100
+indent_style=space
+indent_size=2
+
+# Data files
+[*.{yml,yaml,json,toml,ini}]
+indent_style=space
+indent_size=2
+
+# Python files
+[*.py]
+max_line_length=99
+indent_style=space
+indent_size=4
+
+# Documentation
+[*.{md,rst}]
+max_line_length=80
+indent_style=space
+indent_size=2
