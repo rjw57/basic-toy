@@ -5,6 +5,7 @@ description = "Experiment in a BASIC-like language"
 authors = ["Rich Wareham <rich@richwareham.com>"]
 license = "MIT"
 readme = "README.md"
+packages = [{include = "rwbasic"}]
 
 [tool.poetry.dependencies]
 python = "^3.9"
