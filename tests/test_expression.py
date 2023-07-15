@@ -102,15 +102,10 @@ from rwbasic.interpreter import (
         ("&ff AND &5", 0xFF & 0x5),
         ("&f0 OR &5", 0xF0 | 0x5),
         ("&ff EOR &5", 0xFF ^ 0x5),
-        # Comment
-        ("REM some comment 3+4", None),
-        # Multiple expressio  statements
-        ('1:"Hello"', "Hello"),
-        ("1:2:3", 3),
     ],
 )
 def test_constant_expression(interpreter: Interpreter, expr: str, value: BasicValue):
-    assert interpreter.execute(expr) == value
+    assert interpreter.evaluate(expr) == value
 
 
 @pytest.mark.parametrize(
@@ -127,15 +122,17 @@ def test_constant_expression(interpreter: Interpreter, expr: str, value: BasicVa
 )
 def test_mistake(interpreter: Interpreter, expr: str):
     with pytest.raises(BasicMistakeError):
-        interpreter.execute(expr)
+        interpreter.evaluate(expr)
 
 
 @pytest.mark.parametrize(
     "expr",
     [
         "1.2.3",
+        # Comments are not expressions
+        "REM some comment 3+4",
     ],
 )
 def test_parse_error(interpreter: Interpreter, expr: str):
     with pytest.raises(BasicSyntaxError):
-        interpreter.execute(expr)
+        interpreter.evaluate(expr)

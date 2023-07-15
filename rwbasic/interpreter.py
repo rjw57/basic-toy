@@ -10,9 +10,20 @@ from lark.visitors import Interpreter as LarkInterpreter
 
 BasicValue = typing.Union[np.int32, float, str]
 
-_IMMEDIATE_LINE_PARSER = Lark(
-    importlib.resources.files(__package__).joinpath("grammar.lark").read_text(),
-    start="start",
+_GRAMMAR = importlib.resources.files(__package__).joinpath("grammar.lark").read_text()
+
+# Parser used for input from interactive prompt.
+_PROMPT_LINE_PARSER = Lark(
+    _GRAMMAR,
+    start="promptline",
+    parser="lalr",
+    propagate_positions=True,
+)
+
+# Parser for expressions only.
+_EXPRESSION_PARSER = Lark(
+    _GRAMMAR,
+    start="expression",
     parser="lalr",
     propagate_positions=True,
 )
@@ -71,7 +82,16 @@ def _basic_bool(value: bool) -> BasicValue:
 
 @dataclasses.dataclass
 class _InterpreterState:
+    # Mapping from variable name to current value.
     variables: dict[str, BasicValue] = dataclasses.field(default_factory=dict)
+
+    # Mapping from line number to a list of the statements within that line.
+    lines: dict[int, list[Tree]] = dataclasses.field(default_factory=dict)
+
+    # List of statements comprising the current line. When running a line from the interactive
+    # prompt, this is the line being run. When running a program, this is one of the lines in the
+    # lines mapping.
+    current_line: list[Tree] = dataclasses.field(default_factory=list)
 
 
 class Interpreter:
@@ -82,14 +102,21 @@ class Interpreter:
         self._state = _InterpreterState()
         self._parse_tree_interpreter = _ParseTreeInterpreter(self._state)
 
-    def execute(self, input_line: str) -> typing.Optional[BasicValue]:
+    def evaluate(self, expression: str) -> typing.Optional[BasicValue]:
         try:
-            tree = _IMMEDIATE_LINE_PARSER.parse(input_line)
+            tree = _EXPRESSION_PARSER.parse(expression)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception), lark_exception=lark_exception)
         self._parse_tree_interpreter.visit(tree)
-        assert tree.data is None or _is_basic_value(tree.data)
+        assert _is_basic_value(tree.data)
         return tree.data
+
+    def execute(self, prompt_line: str):
+        try:
+            tree = _PROMPT_LINE_PARSER.parse(prompt_line)
+        except UnexpectedInput as lark_exception:
+            raise BasicSyntaxError(str(lark_exception), lark_exception=lark_exception)
+        self._parse_tree_interpreter.visit(tree)
 
 
 class _ParseTreeInterpreter(LarkInterpreter):
@@ -99,17 +126,19 @@ class _ParseTreeInterpreter(LarkInterpreter):
         super().__init__()
         self._state = state
 
-    def line(self, tree: Tree):
-        self.visit_children(tree)
-        # For a line, the last statement's value propagates.
-        tree.data = tree.children[-1].data
-        assert _is_basic_value(tree.data) or tree.data is None
+    def line_definition(self, tree: Tree):
+        line_number = int(tree.children[0])
+        if line_number <= 0:
+            raise BasicMistakeError("Line numbers must be greater than zero", tree=tree)
+        # We store the individual statement trees as the line content.
+        self._state.lines[line_number] = tree.children[1].children
 
-    def statement(self, tree: Tree):
+    def line_statements(self, tree: Tree):
+        # Record this line as the current line.
+        self._state.current_line = tree.children
         self.visit_children(tree)
-        tree.data = tree.children[0].data
 
-    def printstmt(self, tree: Tree):
+    def print_statement(self, tree: Tree):
         self.visit_children(tree)
         assert _is_basic_value(tree.children[1].data)
         sys.stdout.write(f"{tree.children[1].data}")
@@ -117,9 +146,6 @@ class _ParseTreeInterpreter(LarkInterpreter):
             # We don't have a terminal ";"
             sys.stdout.write("\n")
         sys.stdout.flush()
-
-    def comment(self, tree: Tree):
-        tree.data = None
 
     def literalexpr(self, tree: Tree):
         token = tree.children[0]

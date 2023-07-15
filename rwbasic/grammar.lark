@@ -1,9 +1,12 @@
 // Common base tokens
-%import common (DIGIT, HEXDIGIT)
+%import common (DIGIT, HEXDIGIT, NEWLINE)
 
 // Ignore whitespace
 %import common (WS_INLINE)
 %ignore WS_INLINE
+
+// Comment body. Will match to end of line including any ":" characters.
+COMMENT_BODY: /[^\r\n]/+
 
 // Numeric literal tokens
 BOOLEAN_LITERAL: "TRUE"i | "FALSE"i
@@ -32,19 +35,26 @@ SEMICOLON: ";"
 
 // Keywords
 PRINT: "PRINT"i
+REM: "REM"i
 
-// An individual line presented for parsing.
-?start: line
+// Usually we start with a program
+?start: program
 
-line: (statement ":")* statement
+// A program definition
+program: (line_definition NEWLINE)* line_definition NEWLINE?
 
-statement: comment
-         | expression
-         | printstmt
+// Input to the interactive prompt
+?promptline: line_definition | line_statements
 
-printstmt: PRINT expression SEMICOLON?
+// Define a line via a line number.
+line_definition: DECIMAL_LITERAL line_statements
 
-comment: "REM"i /./*
+// Statements within a line.
+line_statements: (statement ":")* statement
+?statement: comment_statement
+          | print_statement
+comment_statement: REM COMMENT_BODY?
+print_statement: PRINT expression SEMICOLON?
 
 // Expressions
 ?expression: orexpr
