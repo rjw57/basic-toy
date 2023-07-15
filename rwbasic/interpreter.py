@@ -1,15 +1,18 @@
+import dataclasses
 import importlib.resources
+import sys
 import typing
 
 import numpy as np
-from lark import Lark, Tree, Visitor
+from lark import Lark, Tree
 from lark.exceptions import UnexpectedInput
+from lark.visitors import Interpreter as LarkInterpreter
 
 BasicValue = typing.Union[np.int32, float, str]
 
 _IMMEDIATE_LINE_PARSER = Lark(
     importlib.resources.files(__package__).joinpath("grammar.lark").read_text(),
-    start="immediateline",
+    start="start",
     parser="lalr",
     propagate_positions=True,
 )
@@ -66,18 +69,58 @@ def _basic_bool(value: bool) -> BasicValue:
     return np.int32(-1) if value else np.int32(0)
 
 
+@dataclasses.dataclass
+class _InterpreterState:
+    variables: dict[str, BasicValue] = dataclasses.field(default_factory=dict)
+
+
 class Interpreter:
+    _state: _InterpreterState
+    _parse_tree_interpreter: "_ParseTreeInterpreter"
+
     def __init__(self):
-        self._expression_visitor = _ExpressionVisitor()
+        self._state = _InterpreterState()
+        self._parse_tree_interpreter = _ParseTreeInterpreter(self._state)
 
     def execute(self, input_line: str) -> typing.Optional[BasicValue]:
         try:
-            return self._expression_visitor.visit(_IMMEDIATE_LINE_PARSER.parse(input_line)).data
+            tree = _IMMEDIATE_LINE_PARSER.parse(input_line)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception), lark_exception=lark_exception)
+        self._parse_tree_interpreter.visit(tree)
+        assert tree.data is None or _is_basic_value(tree.data)
+        return tree.data
 
 
-class _ExpressionVisitor(Visitor):
+class _ParseTreeInterpreter(LarkInterpreter):
+    _state: _InterpreterState
+
+    def __init__(self, state: _InterpreterState):
+        super().__init__()
+        self._state = state
+
+    def line(self, tree: Tree):
+        self.visit_children(tree)
+        # For a line, the last statement's value propagates.
+        tree.data = tree.children[-1].data
+        assert _is_basic_value(tree.data) or tree.data is None
+
+    def statement(self, tree: Tree):
+        self.visit_children(tree)
+        tree.data = tree.children[0].data
+
+    def printstmt(self, tree: Tree):
+        self.visit_children(tree)
+        assert _is_basic_value(tree.children[1].data)
+        sys.stdout.write(f"{tree.children[1].data}")
+        if len(tree.children) == 2:
+            # We don't have a terminal ";"
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    def comment(self, tree: Tree):
+        tree.data = None
+
     def literalexpr(self, tree: Tree):
         token = tree.children[0]
         match token.type:
@@ -97,6 +140,7 @@ class _ExpressionVisitor(Visitor):
                 raise InternalParserError("Unexpected literal type", tree=tree)
 
     def unaryexpr(self, tree: Tree):
+        self.visit_children(tree)
         children = list(tree.children)
         rhs = children.pop()
         tree.data = rhs.data
@@ -135,6 +179,7 @@ class _ExpressionVisitor(Visitor):
         return self._binaryopexpr(tree)
 
     def _binaryopexpr(self, tree: Tree):
+        self.visit_children(tree)
         children = list(tree.children)
         rhs = children.pop()
         tree.data = rhs.data

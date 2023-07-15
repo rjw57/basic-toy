@@ -27,10 +27,24 @@ COMPOP: "=" | "<>" | "<" | ">" | "<=" | ">=" | "<<" | ">>" | ">>>"
 ANDOP: "AND"i
 OROP: "OR"i | "EOR"i
 
-// Immediate line - one which could be entered at the REPL.
-?immediateline: comment | expression
+// Symbols
+SEMICOLON: ";"
 
-comment: "REM"i
+// Keywords
+PRINT: "PRINT"i
+
+// An individual line presented for parsing.
+?start: line
+
+line: (statement ":")* statement
+
+statement: comment
+         | expression
+         | printstmt
+
+printstmt: PRINT expression SEMICOLON?
+
+comment: "REM"i /./*
 
 // Expressions
 ?expression: orexpr

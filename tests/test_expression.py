@@ -1,11 +1,11 @@
 import pytest
 
-from rwbasic.interpreter import BasicMistakeError, BasicSyntaxError, Interpreter
-
-
-@pytest.fixture
-def interpreter():
-    return Interpreter()
+from rwbasic.interpreter import (
+    BasicMistakeError,
+    BasicSyntaxError,
+    BasicValue,
+    Interpreter,
+)
 
 
 @pytest.mark.parametrize(
@@ -102,9 +102,14 @@ def interpreter():
         ("&ff AND &5", 0xFF & 0x5),
         ("&f0 OR &5", 0xF0 | 0x5),
         ("&ff EOR &5", 0xFF ^ 0x5),
+        # Comment
+        ("REM some comment 3+4", None),
+        # Multiple expressio  statements
+        ('1:"Hello"', "Hello"),
+        ("1:2:3", 3),
     ],
 )
-def test_constant_expression(interpreter, expr, value):
+def test_constant_expression(interpreter: Interpreter, expr: str, value: BasicValue):
     assert interpreter.execute(expr) == value
 
 
@@ -120,7 +125,7 @@ def test_constant_expression(interpreter, expr, value):
         '"one"+5',
     ],
 )
-def test_mistake(interpreter, expr):
+def test_mistake(interpreter: Interpreter, expr: str):
     with pytest.raises(BasicMistakeError):
         interpreter.execute(expr)
 
@@ -131,6 +136,6 @@ def test_mistake(interpreter, expr):
         "1.2.3",
     ],
 )
-def test_parse_error(interpreter, expr):
+def test_parse_error(interpreter: Interpreter, expr: str):
     with pytest.raises(BasicSyntaxError):
         interpreter.execute(expr)
