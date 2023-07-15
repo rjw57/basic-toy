@@ -1,5 +1,5 @@
 // Common base tokens
-%import common (DIGIT, HEXDIGIT, NEWLINE)
+%import common (DIGIT, HEXDIGIT, NEWLINE, LETTER)
 
 // Ignore whitespace
 %import common (WS_INLINE)
@@ -17,6 +17,9 @@ FLOAT_LITERAL: DECIMAL_LITERAL _EXPONENT | _FIXED_LITERAL _EXPONENT?
 // String literal
 STRING_LITERAL: "\"" (/[^"]/ | "\"\"")* "\""
 
+// Variable reference. We use a low priority to match keywords in preference.
+VARIABLE.-1: LETTER (LETTER | DIGIT)* ("$" | "%")?
+
 // Classes of operator tokens grouped by priority. Operators listed first are acted upon before
 // operators listed second and so on.
 UNARYOP: "+" | "-" | "NOT"i // TODO: indirection
@@ -32,6 +35,7 @@ SEMICOLON: ";"
 
 // Keywords.
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
+LET: "LET"i
 PRINT: "PRINT"i
 REM: "REM"i
 
@@ -54,8 +58,10 @@ line_definition: DECIMAL_LITERAL line_statements
 line_statements: (statement ":")* statement?
 ?statement: comment_statement
           | print_statement
+          | let_statement
 comment_statement: COMMENT
 print_statement: PRINT expression SEMICOLON?
+let_statement: LET? VARIABLE "=" expression
 
 // Expressions
 ?expression: orexpr
@@ -68,6 +74,7 @@ print_statement: PRINT expression SEMICOLON?
 ?unaryexpr: UNARYOP* atomexpr
 ?atomexpr: "(" expression ")"
          | literalexpr
-
+         | variablerefexpr
 literalexpr: BOOLEAN_LITERAL | BINARY_LITERAL | DECIMAL_LITERAL | HEX_LITERAL | FLOAT_LITERAL
            | STRING_LITERAL
+variablerefexpr: VARIABLE

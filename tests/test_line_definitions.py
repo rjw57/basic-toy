@@ -17,19 +17,18 @@ def test_line_definition(interpreter: Interpreter, line: str, capsys):
     assert captured.out == ""
 
 
-def test_zero_line_number():
+def test_zero_line_number(interpreter: Interpreter):
     with pytest.raises(BasicMistakeError):
-        Interpreter().execute("0 PRINT 1234")
+        interpreter.execute("0 PRINT 1234")
 
 
-def test_negative_line_number():
+def test_negative_line_number(interpreter: Interpreter):
     with pytest.raises(BasicSyntaxError):
-        Interpreter().execute("-10 PRINT 1234")
+        interpreter.execute("-10 PRINT 1234")
 
 
-@pytest.fixture(scope="session")
-def program_lines():
-    interpreter = Interpreter()
+@pytest.fixture
+def program_lines(interpreter: Interpreter):
     lines = [
         "20 REM some line",
         "10 PRINT 1234",

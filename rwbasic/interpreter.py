@@ -55,11 +55,18 @@ class InternalParserError(BasicError):
     pass
 
 
+def _is_integer_basic_value(value: BasicValue):
+    """
+    Return True if and only if value is an integer BASIC value.
+    """
+    return isinstance(value, np.int32)
+
+
 def _is_numeric_basic_value(value: BasicValue):
     """
     Return True if and only if value is a numeric BASIC value.
     """
-    return isinstance(value, np.int32) or isinstance(value, float)
+    return _is_integer_basic_value(value) or isinstance(value, float)
 
 
 def _is_string_basic_value(value: BasicValue):
@@ -149,6 +156,21 @@ class _ParseTreeInterpreter(LarkInterpreter):
             # We don't have a terminal ";"
             sys.stdout.write("\n")
         sys.stdout.flush()
+
+    def let_statement(self, tree: Tree):
+        self.visit_children(tree)
+        variable_name, value_node = tree.children[-2:]
+        value = value_node.data
+        assert _is_basic_value(value)
+
+        if variable_name.endswith("$") and not _is_string_basic_value(value):
+            raise BasicMistakeError("Cannot assign non-string value to string variable", tree=tree)
+        if not variable_name.endswith("$") and not _is_numeric_basic_value(value):
+            raise BasicMistakeError("Cannot assign non-numeric value to variable", tree=tree)
+        if variable_name.endswith("%"):
+            # Ensure we only assign numbers to integer variables.
+            value = np.int32(value)
+        self._state.variables[variable_name] = value
 
     def literalexpr(self, tree: Tree):
         token = tree.children[0]
@@ -267,3 +289,10 @@ class _ParseTreeInterpreter(LarkInterpreter):
                     raise InternalParserError(f"Unknown binary operator: {op}", tree=tree)
             rhs = lhs
         assert _is_basic_value(tree.data), f"Non-numeric output: {tree.data!r}"
+
+    def variablerefexpr(self, tree: Tree):
+        variable_name = tree.children[0]
+        try:
+            tree.data = self._state.variables[variable_name]
+        except KeyError:
+            raise BasicMistakeError(f"No such variable: {variable_name}", tree=tree)
