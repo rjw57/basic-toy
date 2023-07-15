@@ -1,6 +1,6 @@
 import pytest
 
-from rwbasic.interpreter import BasicMistakeError, BasicSyntaxError, Interpreter
+from rwbasic.interpreter import BasicBadProgramError, BasicSyntaxError, Interpreter
 
 
 @pytest.mark.parametrize(
@@ -18,7 +18,7 @@ def test_line_definition(interpreter: Interpreter, line: str, capsys):
 
 
 def test_zero_line_number(interpreter: Interpreter):
-    with pytest.raises(BasicMistakeError):
+    with pytest.raises(BasicBadProgramError):
         interpreter.execute("0 PRINT 1234")
 
 

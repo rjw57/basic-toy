@@ -19,6 +19,7 @@ numpy = "^1.25.1"
 prompt-toolkit = "^3.0.39"
 better-exceptions = "^0.3.3"
 pygments = "^2.15.1"
+sortedcontainers = "^2.4.0"
 
 
 [tool.poetry.group.dev.dependencies]

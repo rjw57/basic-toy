@@ -38,6 +38,7 @@ SEMICOLON: ";"
 LET: "LET"i
 PRINT: "PRINT"i
 REM: "REM"i
+RUN: "RUN"i
 
 // Comment. Will match to end of line including any ":" characters.
 COMMENT: REM /[^\r\n]/*
@@ -46,22 +47,28 @@ COMMENT: REM /[^\r\n]/*
 ?start: program
 
 // A program definition
-program: (line_definition NEWLINE)* line_definition NEWLINE?
+program: (program_line NEWLINE)* program_line
+
+?program_line: numbered_line_definition | unnumbered_line_definition
+
+unnumbered_line_definition: line_statements
 
 // Input to the interactive prompt
-?promptline: line_definition | line_statements
+?promptline: numbered_line_definition | line_statements
 
 // Define a line via a line number.
-line_definition: DECIMAL_LITERAL line_statements
+numbered_line_definition: DECIMAL_LITERAL line_statements
 
 // Statements within a line.
 line_statements: (statement ":")* statement?
 ?statement: comment_statement
           | print_statement
           | let_statement
+          | run_statement
 comment_statement: COMMENT
 print_statement: PRINT expression SEMICOLON?
 let_statement: LET? VARIABLE "=" expression
+run_statement: RUN
 
 // Expressions
 ?expression: orexpr

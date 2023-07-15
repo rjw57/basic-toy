@@ -7,6 +7,7 @@ import numpy as np
 from lark import Lark, Tree
 from lark.exceptions import UnexpectedInput
 from lark.visitors import Interpreter as LarkInterpreter
+from sortedcontainers import SortedDict
 
 BasicValue = typing.Union[np.int32, float, str]
 
@@ -24,6 +25,14 @@ _PROMPT_LINE_PARSER = Lark(
 _EXPRESSION_PARSER = Lark(
     _GRAMMAR,
     start="expression",
+    parser="lalr",
+    propagate_positions=True,
+)
+
+# Parser for programs.
+_PROGRAM_PARSER = Lark(
+    _GRAMMAR,
+    start="program",
     parser="lalr",
     propagate_positions=True,
 )
@@ -48,6 +57,12 @@ class BasicSyntaxError(BasicError):
 class BasicMistakeError(BasicError):
     """
     Raised when there was some runtime mistake.
+    """
+
+
+class BasicBadProgramError(BasicError):
+    """
+    Raised when the program itself is wrongly specified.
     """
 
 
@@ -91,33 +106,60 @@ def _basic_bool(value: bool) -> BasicValue:
 
 
 @dataclasses.dataclass
+class ExecutionLocation:
+    # Index of statement within line.
+    statement_index: int
+
+    # Line number. The special value None is used to indicated the immediate line presented to the
+    # prompt.
+    line_number: typing.Optional[int] = None
+
+
+@dataclasses.dataclass
 class _InterpreterState:
     # Mapping from variable name to current value.
     variables: dict[str, BasicValue] = dataclasses.field(default_factory=dict)
 
-    # Mapping from line number to a list of the statements within that line.
-    lines: dict[int, list[Tree]] = dataclasses.field(default_factory=dict)
+    # Lines which make up the current program. Mapping from line number to a list of the statements
+    # within that line.
+    lines: SortedDict[int, list[Tree]] = dataclasses.field(default_factory=SortedDict)
 
-    # List of statements comprising the current line. When running a line from the interactive
-    # prompt, this is the line being run. When running a program, this is one of the lines in the
-    # lines mapping.
-    current_line: list[Tree] = dataclasses.field(default_factory=list)
+    # The most recent line passed as an immediate line to execute in the prompt. May be None if
+    # there is no such line.
+    prompt_line: typing.Optional[list[Tree]] = None
+
+    # Current execution location or None if we're not executing at the moment.
+    execution_location: typing.Optional[ExecutionLocation] = None
+
+    # Execution location for next statement or None if we should stop execution.
+    next_execution_location: typing.Optional[ExecutionLocation] = None
 
 
 class Interpreter:
     _state: _InterpreterState
-    _parse_tree_interpreter: "_ParseTreeInterpreter"
 
     def __init__(self):
         self._state = _InterpreterState()
-        self._parse_tree_interpreter = _ParseTreeInterpreter(self._state)
+
+    def load_program(self, program: str):
+        try:
+            tree = _PROGRAM_PARSER.parse(program)
+        except UnexpectedInput as lark_exception:
+            raise BasicSyntaxError(str(lark_exception)) from lark_exception
+        # Clear any existing state and store line definitions.
+        self._state = _InterpreterState()
+        _ParseTreeInterpreter(self._state).visit(tree)
+
+    def load_and_run_program(self, program: str):
+        self.load_program(program)
+        self.execute("RUN")
 
     def evaluate(self, expression: str) -> typing.Optional[BasicValue]:
         try:
             tree = _EXPRESSION_PARSER.parse(expression)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception)) from lark_exception
-        self._parse_tree_interpreter.visit(tree)
+        _ParseTreeInterpreter(self._state).visit(tree)
         assert _is_basic_value(tree.data)
         return tree.data
 
@@ -126,27 +168,99 @@ class Interpreter:
             tree = _PROMPT_LINE_PARSER.parse(prompt_line)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception)) from lark_exception
-        self._parse_tree_interpreter.visit(tree)
+        _ParseTreeInterpreter(self._state, executing_from_prompt=True).visit(tree)
 
 
 class _ParseTreeInterpreter(LarkInterpreter):
     _state: _InterpreterState
+    _executing_from_prompt: bool
 
-    def __init__(self, state: _InterpreterState):
+    def __init__(self, state: _InterpreterState, *, executing_from_prompt=False):
         super().__init__()
         self._state = state
+        self._executing_from_prompt = executing_from_prompt
 
-    def line_definition(self, tree: Tree):
+    def _start_execution(self):
+        # We should start executing with some start point.
+        assert self._state.execution_location is not None
+
+        # Keep going until we run out of program.
+        while self._state.execution_location is not None:
+            # Assume the next execution location will be the next statement.
+            if self._state.execution_location.line_number is None:
+                current_line = self._state.prompt_line
+            else:
+                current_line = self._state.lines[self._state.execution_location.line_number]
+
+            if self._state.execution_location.statement_index + 1 < len(current_line):
+                # Next statement is in the same line.
+                self._state.next_execution_location = ExecutionLocation(
+                    line_number=self._state.execution_location.line_number,
+                    statement_index=self._state.execution_location.statement_index + 1,
+                )
+            elif self._state.execution_location.line_number is not None:
+                # Move to next line.
+                line_index = self._state.lines.index(self._state.execution_location.line_number)
+                if line_index + 1 >= len(self._state.lines):
+                    # No more lines
+                    self._state.next_execution_location = None
+                else:
+                    self._state.next_execution_location = ExecutionLocation(
+                        line_number=self._state.lines.keys()[line_index + 1],
+                        statement_index=0,
+                    )
+            else:
+                # At end of prompt line.
+                self._state.next_execution_location = None
+
+            # Execute the current statement if there are any on this line. We have the check
+            # because we might have an execution location pointing to the start of an empty line.
+            if len(current_line) > 0:
+                current_statement = current_line[self._state.execution_location.statement_index]
+                self.visit(current_statement)
+
+            # Move to next location.
+            self._state.execution_location = self._state.next_execution_location
+
+    def numbered_line_definition(self, tree: Tree):
         line_number = int(tree.children[0])
+        self._add_line_definition(line_number, tree.children[1])
+
+    def unnumbered_line_definition(self, tree: Tree):
+        # Unnumbered lines in programs get numbered automagically.
+        assert not self._executing_from_prompt
+        if len(self._state.lines) == 0:
+            line_number = 1
+        else:
+            line_number = self._state.lines.keys()[-1] + 1
+        self._add_line_definition(line_number, tree.children[0])
+
+    def _add_line_definition(self, line_number: int, line_statements: Tree):
         if line_number <= 0:
-            raise BasicMistakeError("Line numbers must be greater than zero", tree=tree)
+            raise BasicBadProgramError(
+                "Line numbers must be greater than zero", tree=line_statements
+            )
+        # If we're not in the interactive prompt, line numbers must strictly increase
+        if (
+            not self._executing_from_prompt
+            and len(self._state.lines) > 0
+            and line_number <= self._state.lines.keys()[-1]
+        ):
+            raise BasicBadProgramError(
+                "Line numbers must increase in programs", tree=line_statements
+            )
         # We store the individual statement trees as the line content.
-        self._state.lines[line_number] = tree.children[1].children
+        self._state.lines[line_number] = line_statements.children
 
     def line_statements(self, tree: Tree):
-        # Record this line as the current line.
-        self._state.current_line = tree.children
-        self.visit_children(tree)
+        if self._executing_from_prompt:
+            # If we're executing a single prompt line, record this line as the current prompt line.
+            self._state.prompt_line = tree.children
+
+            # If there is at least one statement in the line, start execution.
+            if len(tree.children) > 0:
+                self._state.execution_location = ExecutionLocation(statement_index=0)
+                self._start_execution()
 
     def print_statement(self, tree: Tree):
         self.visit_children(tree)
@@ -171,6 +285,23 @@ class _ParseTreeInterpreter(LarkInterpreter):
             # Ensure we only assign numbers to integer variables.
             value = np.int32(value)
         self._state.variables[variable_name] = value
+
+    def run_statement(self, tree: Tree):
+        if not self._executing_from_prompt:
+            raise BasicMistakeError("Cannot RUN when not in interactive prompt.", tree=tree)
+
+        # Nothing to do if there is no program.
+        if len(self._state.lines) == 0:
+            return
+
+        # Start at first line
+        self._state.execution_location = ExecutionLocation(
+            line_number=self._state.lines.keys()[0], statement_index=0
+        )
+        assert self._executing_from_prompt
+        self._executing_from_prompt = False
+        self._start_execution()
+        self._executing_from_prompt = True
 
     def literalexpr(self, tree: Tree):
         token = tree.children[0]
