@@ -1,3 +1,3 @@
-from . import main
+from .tool import main
 
 main()

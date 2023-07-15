@@ -1,39 +1,27 @@
 import dataclasses
-import importlib.resources
 import sys
 import typing
+from functools import cache
 
-import numpy as np
 from lark import Lark, Token, Transformer, Tree
 from lark.exceptions import UnexpectedInput, VisitError
 from lark.visitors import Interpreter as LarkInterpreter
 from lark.visitors import v_args
+from numpy import int32, uint32
 from sortedcontainers import SortedKeyList
 
-BasicValue = typing.Union[np.int32, float, str]
+BasicValue = typing.Union[int32, float, str]
 
-_GRAMMAR = importlib.resources.files(__package__).joinpath("grammar.lark").read_text()
 
-# Parser used for input from interactive prompt.
-_PROMPT_LINE_PARSER = Lark(
-    _GRAMMAR,
-    start="promptline",
-    propagate_positions=True,
-)
+@cache
+def load_parser() -> Lark:
+    return Lark.open_from_package(
+        __package__,
+        "grammar.lark",
+        propagate_positions=True,
+        start=["program", "promptline", "expression"],
+    )
 
-# Parser for expressions only.
-_EXPRESSION_PARSER = Lark(
-    _GRAMMAR,
-    start="expression",
-    propagate_positions=True,
-)
-
-# Parser for programs.
-_PROGRAM_PARSER = Lark(
-    _GRAMMAR,
-    start="program",
-    propagate_positions=True,
-)
 
 # Binary operators which understand string types
 _STRING_BINARY_OPS = {"+", "=", "<>"}
@@ -68,14 +56,14 @@ class InternalParserError(BasicError):
     pass
 
 
-def _is_integer_basic_value(value: BasicValue) -> typing.TypeGuard[np.int32]:
+def _is_integer_basic_value(value: BasicValue) -> typing.TypeGuard[int32]:
     """
     Return True if and only if value is an integer BASIC value.
     """
-    return isinstance(value, np.int32)
+    return isinstance(value, int32)
 
 
-def _is_numeric_basic_value(value: BasicValue) -> typing.TypeGuard[typing.Union[np.int32, float]]:
+def _is_numeric_basic_value(value: BasicValue) -> typing.TypeGuard[typing.Union[int32, float]]:
     """
     Return True if and only if value is a numeric BASIC value.
     """
@@ -100,7 +88,7 @@ def _basic_bool(value: bool) -> BasicValue:
     """
     Convert a Python boolean into a BASIC boolean.
     """
-    return np.int32(-1) if value else np.int32(0)
+    return int32(-1) if value else int32(0)
 
 
 @dataclasses.dataclass
@@ -168,22 +156,22 @@ class Interpreter:
     def __init__(self):
         self._state = _InterpreterState()
 
-    def _parse(self, parser: Lark, input_text: str) -> Tree:
+    def _parse(self, input_text: str, **kwargs) -> Tree:
         try:
-            return parser.parse(input_text)
+            return load_parser().parse(input_text, **kwargs)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception)) from lark_exception
 
     def load_program(self, program: str):
         self.execute("NEW")
-        _ParseTreeInterpreter(self._state).visit(self._parse(_PROGRAM_PARSER, program))
+        _ParseTreeInterpreter(self._state).visit(self._parse(program, start="program"))
 
     def load_and_run_program(self, program: str):
         self.load_program(program)
         self.execute("RUN")
 
     def evaluate(self, expression: str) -> typing.Optional[BasicValue]:
-        tree = self._parse(_EXPRESSION_PARSER, expression)
+        tree = self._parse(expression, start="expression")
         try:
             value = _ExpressionTransformer(self._state).transform(tree)
         except VisitError as e:
@@ -193,7 +181,7 @@ class Interpreter:
 
     def execute(self, prompt_line: str):
         _ParseTreeInterpreter(self._state, executing_from_prompt=True).visit(
-            self._parse(_PROMPT_LINE_PARSER, prompt_line)
+            self._parse(prompt_line, start="promptline")
         )
 
 
@@ -360,7 +348,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             raise BasicMistakeError("Cannot assign non-numeric value to variable", tree=tree)
         if variable_name.endswith("%"):
             # Ensure we only assign numbers to integer variables.
-            value = np.int32(value)
+            value = int32(value)
         self._state.variables[variable_name] = value
 
     def new_statement(self, tree: Tree):
@@ -433,7 +421,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
                     "FOR step value must be numeric", tree=for_loop.step_expression
                 )
         else:
-            step = np.int32(1)
+            step = int32(1)
 
         index_value = self._state.variables[for_loop.variable_name]
         assert _is_numeric_basic_value(index_value)
@@ -470,11 +458,11 @@ class _ExpressionTransformer(Transformer):
             case "BOOLEAN_LITERAL":
                 return _basic_bool(token.upper() == "TRUE")
             case "BINARY_LITERAL":
-                return np.int32(int(token[1:], base=2))
+                return int32(int(token[1:], base=2))
             case "HEX_LITERAL":
-                return np.int32(int(token[1:], base=16))
+                return int32(int(token[1:], base=16))
             case "DECIMAL_LITERAL":
-                return np.int32(int(token, base=10))
+                return int32(int(token, base=10))
             case "FLOAT_LITERAL":
                 return float(token)
             case _:  # pragma: no cover
@@ -500,7 +488,7 @@ class _ExpressionTransformer(Transformer):
                 case "-":
                     rhs = -rhs
                 case "NOT":
-                    rhs = np.int32(rhs ^ np.uint32(0xFFFFFFFF))
+                    rhs = int32(rhs ^ uint32(0xFFFFFFFF))
                 case _:  # pragma: no cover
                     raise InternalParserError(f"Unknown unary operator: {op}", tree=tree)
         assert _is_numeric_basic_value(rhs)
@@ -575,10 +563,8 @@ class _ExpressionTransformer(Transformer):
                     rhs = lhs << rhs
                 case ">>":
                     # Arithmetic shift right is a little bit complicated in Python(!)
-                    rhs = (lhs >> rhs) | np.int32(
-                        (np.uint32(0xFFFFFFFF >> rhs)) ^ np.uint32(0xFFFFFFFF)
-                        if lhs & 0x80000000
-                        else 0
+                    rhs = (lhs >> rhs) | int32(
+                        (uint32(0xFFFFFFFF >> rhs)) ^ uint32(0xFFFFFFFF) if lhs & 0x80000000 else 0
                     )
                 case ">>>":
                     rhs = lhs >> rhs

@@ -9,7 +9,7 @@ packages = [{include = "rwbasic"}]
 include = ["rwbasic/*.lark"]
 
 [tool.poetry.scripts]
-rwbasic = "rwbasic:main"
+rwbasic = "rwbasic.tool:main"
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -20,6 +20,7 @@ prompt-toolkit = "^3.0.39"
 better-exceptions = "^0.3.3"
 pygments = "^2.15.1"
 sortedcontainers = "^2.4.0"
+docopt = "^0.6.2"
 
 
 [tool.poetry.group.dev.dependencies]

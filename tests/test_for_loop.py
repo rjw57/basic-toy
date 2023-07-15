@@ -38,3 +38,18 @@ def test_expected_output(interpreter: Interpreter, line: str, expected_output: s
 def test_mistake(interpreter: Interpreter, line: str):
     with pytest.raises(BasicMistakeError):
         interpreter.execute(line)
+
+
+@pytest.mark.parametrize(
+    "program,expected_output",
+    [
+        (
+            "FORI%=1TO3:FORJ%=I%TO5STEP2\nPRINTI%,J%\nNEXT:NEXT",
+            "1 1\n1 3\n1 5\n2 2\n2 4\n3 3\n3 5\n",
+        )
+    ],
+)
+def test_program(interpreter: Interpreter, program: str, expected_output: str, capsys):
+    interpreter.load_and_run_program(program)
+    captured = capsys.readouterr()
+    assert captured.out == expected_output

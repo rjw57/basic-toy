@@ -49,9 +49,6 @@ COMMENT: REM /[^\r\n]/*
 // Print formatting
 PRINT_ITEM_SEPARATOR: ";" | "," | "'"
 
-// Usually we start with a program
-?start: program
-
 // A program definition
 program: (program_line NEWLINE)* program_line
 
