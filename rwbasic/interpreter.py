@@ -3,32 +3,66 @@ import typing
 
 import numpy as np
 from lark import Lark, Tree, Visitor
+from lark.exceptions import UnexpectedInput
 
 BasicValue = typing.Union[np.int32, float, str]
 
-EXPRESSION_PARSER = Lark(
+_IMMEDIATE_LINE_PARSER = Lark(
     importlib.resources.files(__package__).joinpath("grammar.lark").read_text(),
-    start="expression",
+    start="immediateline",
     parser="lalr",
     propagate_positions=True,
 )
 
+# Binary operators which understand string types
+_STRING_BINARY_OPS = {"+", "=", "<>"}
+
 
 class BasicError(RuntimeError):
-    def __init__(self, message: str, tree: Tree):
+    def __init__(self, message: str, *, tree: typing.Optional[Tree] = None):
         super().__init__(message)
         self._tree = tree
+
+
+class BasicSyntaxError(BasicError):
+    def __init__(self, message: str, *, lark_exception: Exception, **kwargs):
+        super().__init__(message, **kwargs)
+        self._lark_exception = lark_exception
+
+
+class BasicMistakeError(BasicError):
+    pass
 
 
 class InternalParserError(BasicError):
     pass
 
 
-def _is_numeric_value(value: BasicValue):
+def _is_numeric_basic_value(value: BasicValue):
+    """
+    Return True if and only if value is a numeric BASIC value.
+    """
     return isinstance(value, np.int32) or isinstance(value, float)
 
 
+def _is_string_basic_value(value: BasicValue):
+    """
+    Return True if and only if value is a string BASIC value.
+    """
+    return isinstance(value, str)
+
+
+def _is_basic_value(value: BasicValue):
+    """
+    Return True if and only if value is a BASIC value.
+    """
+    return _is_numeric_basic_value(value) or _is_string_basic_value(value)
+
+
 def _basic_bool(value: bool) -> BasicValue:
+    """
+    Convert a Python boolean into a BASIC boolean.
+    """
     return np.int32(-1) if value else np.int32(0)
 
 
@@ -37,7 +71,10 @@ class Interpreter:
         self._expression_visitor = _ExpressionVisitor()
 
     def execute(self, input_line: str) -> typing.Optional[BasicValue]:
-        return self._expression_visitor.visit(EXPRESSION_PARSER.parse(input_line)).data
+        try:
+            return self._expression_visitor.visit(_IMMEDIATE_LINE_PARSER.parse(input_line)).data
+        except UnexpectedInput as lark_exception:
+            raise BasicSyntaxError(str(lark_exception), lark_exception=lark_exception)
 
 
 class _ExpressionVisitor(Visitor):
@@ -45,7 +82,7 @@ class _ExpressionVisitor(Visitor):
         token = tree.children[0]
         match token.type:
             case "BOOLEAN_LITERAL":
-                tree.data = _basic_bool(token == "TRUE")
+                tree.data = _basic_bool(token.upper() == "TRUE")
             case "BINARY_LITERAL":
                 tree.data = np.int32(int(token[1:], base=2))
             case "HEX_LITERAL":
@@ -54,17 +91,20 @@ class _ExpressionVisitor(Visitor):
                 tree.data = np.int32(int(token, base=10))
             case "FLOAT_LITERAL":
                 tree.data = float(token)
-            case _:
-                raise InternalParserError("Unexpected literal type", tree)
+            case "STRING_LITERAL":
+                tree.data = token[1:-1].replace('""', '"')
+            case _:  # pragma: no cover
+                raise InternalParserError("Unexpected literal type", tree=tree)
 
     def unaryexpr(self, tree: Tree):
         children = list(tree.children)
         rhs = children.pop()
         tree.data = rhs.data
         while len(children) > 0:
-            op = children.pop()
-            if not _is_numeric_value(rhs.data):
-                raise BasicError(f"Inappropriate type for unary operation {op}", rhs)
+            op = children.pop().upper()
+            # All unary operators need numeric input.
+            if not _is_numeric_basic_value(rhs.data):
+                raise BasicMistakeError(f"Inappropriate type for unary operation {op}", tree=rhs)
             match op:
                 case "+":
                     pass  # Do nothing
@@ -72,9 +112,9 @@ class _ExpressionVisitor(Visitor):
                     tree.data = -tree.data
                 case "NOT":
                     tree.data = np.int32(tree.data ^ np.uint32(0xFFFFFFFF))
-                case _:
-                    raise InternalParserError(f"Unknown unary operator: {op}", tree)
-        assert _is_numeric_value(tree.data)
+                case _:  # pragma: no cover
+                    raise InternalParserError(f"Unknown unary operator: {op}", tree=tree)
+        assert _is_numeric_basic_value(tree.data)
 
     def powerexpr(self, tree: Tree):
         return self._binaryopexpr(tree)
@@ -99,13 +139,12 @@ class _ExpressionVisitor(Visitor):
         rhs = children.pop()
         tree.data = rhs.data
         while len(children) > 0:
-            op = children.pop()
-            # TODO: string operations
-            if not _is_numeric_value(rhs.data):
-                raise BasicError(f"Inappropriate type for operation {op}", rhs)
+            op = children.pop().upper()
+            if op not in _STRING_BINARY_OPS and not _is_numeric_basic_value(rhs.data):
+                raise BasicMistakeError(f"Inappropriate type for operation {op}", tree=rhs)
             lhs = children.pop()
-            if not _is_numeric_value(lhs.data):
-                raise BasicError(f"Inappropriate type for operation {op}", lhs)
+            if _is_numeric_basic_value(lhs.data) != _is_numeric_basic_value(rhs.data):
+                raise BasicMistakeError(f"Cannot mix types for operator {op}", tree=tree)
             match op:
                 case "+":
                     tree.data = lhs.data + tree.data
@@ -150,7 +189,7 @@ class _ExpressionVisitor(Visitor):
                     tree.data = lhs.data >> tree.data
                 case "^":
                     tree.data = lhs.data**tree.data
-                case _:
-                    raise InternalParserError(f"Unknown power operator: {op}", tree)
+                case _:  # pragma: no cover
+                    raise InternalParserError(f"Unknown binary operator: {op}", tree=tree)
             rhs = lhs
-        assert _is_numeric_value(tree.data), f"Non-numeric output: {tree.data!r}"
+        assert _is_basic_value(tree.data), f"Non-numeric output: {tree.data!r}"
