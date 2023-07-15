@@ -17,7 +17,7 @@ FLOAT_LITERAL: DECIMAL_LITERAL _EXPONENT | _FIXED_LITERAL _EXPONENT?
 // String literal
 STRING_LITERAL: "\"" (/[^"]/ | "\"\"")* "\""
 
-// Variable reference. We use a low priority to match keywords in preference.
+// Variable reference. Low priority so we prefer matching terminals like TRUE and FALSE first.
 VARIABLE.-1: LETTER (LETTER | DIGIT)* ("$" | "%")?
 
 // Classes of operator tokens grouped by priority. Operators listed first are acted upon before
@@ -29,9 +29,6 @@ ADDOP: "+" | "-"
 COMPOP: "=" | "<>" | "<" | ">" | "<=" | ">=" | "<<" | ">>" | ">>>"
 ANDOP: "AND"i
 OROP: "OR"i | "EOR"i
-
-// Symbols
-SEMICOLON: ";"
 
 // Keywords.
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
@@ -48,6 +45,9 @@ TO: "TO"i
 
 // Comment. Will match to end of line including any ":" characters.
 COMMENT: REM /[^\r\n]/*
+
+// Print formatting
+PRINT_ITEM_SEPARATOR: ";" | "," | "'"
 
 // Usually we start with a program
 ?start: program
@@ -76,7 +76,7 @@ line_statements: (statement ":")* statement?
           | for_statement
           | next_statement
 comment_statement: COMMENT
-print_statement: PRINT expression SEMICOLON?
+print_statement: PRINT (expression (" " | PRINT_ITEM_SEPARATOR))* expression?
 let_statement: LET? VARIABLE "=" expression
 run_statement: RUN
 new_statement: NEW
@@ -94,8 +94,9 @@ next_statement: NEXT VARIABLE?
 ?powerexpr: (unaryexpr POWEROP)* unaryexpr
 ?unaryexpr: UNARYOP* atomexpr
 ?atomexpr: "(" expression ")"
-         | literalexpr
+         | numliteralexpr
+         | strliteralexpr
          | variablerefexpr
-literalexpr: BOOLEAN_LITERAL | BINARY_LITERAL | DECIMAL_LITERAL | HEX_LITERAL | FLOAT_LITERAL
-           | STRING_LITERAL
+numliteralexpr: BOOLEAN_LITERAL | BINARY_LITERAL | DECIMAL_LITERAL | HEX_LITERAL | FLOAT_LITERAL
+strliteralexpr: STRING_LITERAL
 variablerefexpr: VARIABLE

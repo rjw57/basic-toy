@@ -4,7 +4,7 @@ import sys
 import typing
 
 import numpy as np
-from lark import Lark, Transformer, Tree
+from lark import Lark, Token, Transformer, Tree
 from lark.exceptions import UnexpectedInput, VisitError
 from lark.visitors import Interpreter as LarkInterpreter
 from lark.visitors import v_args
@@ -18,7 +18,6 @@ _GRAMMAR = importlib.resources.files(__package__).joinpath("grammar.lark").read_
 _PROMPT_LINE_PARSER = Lark(
     _GRAMMAR,
     start="promptline",
-    parser="lalr",
     propagate_positions=True,
 )
 
@@ -26,7 +25,6 @@ _PROMPT_LINE_PARSER = Lark(
 _EXPRESSION_PARSER = Lark(
     _GRAMMAR,
     start="expression",
-    parser="lalr",
     propagate_positions=True,
 )
 
@@ -34,7 +32,6 @@ _EXPRESSION_PARSER = Lark(
 _PROGRAM_PARSER = Lark(
     _GRAMMAR,
     start="program",
-    parser="lalr",
     propagate_positions=True,
 )
 
@@ -317,12 +314,38 @@ class _ParseTreeInterpreter(LarkInterpreter):
                 self._start_execution()
 
     def print_statement(self, tree: Tree):
-        value = self._evaluate_expression(tree.children[1])
-        sys.stdout.write(f"{value}")
-        if len(tree.children) == 2:
-            # We don't have a terminal ";"
+        item_index = 1
+        separator = " "
+        while item_index < len(tree.children):
+            item_expression = tree.children[item_index]
+            item_index += 1
+            if (
+                item_index < len(tree.children)
+                and isinstance(tree.children[item_index], Token)
+                and tree.children[item_index].type == "PRINT_ITEM_SEPARATOR"
+            ):
+                separator = tree.children[item_index]
+                item_index += 1
+            else:
+                separator = " "
+
+            value = self._evaluate_expression(item_expression)
+            sys.stdout.write(f"{value}")
+            match separator:
+                case "'":
+                    sys.stdout.write("\n")
+                case ";" | " ":
+                    pass  # no-op separator
+                case ",":
+                    # FIXME: we don't properly support the column alignment separator "," yet.
+                    sys.stdout.write(" ")
+                case _:  # pragma: no cover
+                    raise InternalParserError(
+                        f"Unknown print item separator: {separator!r}", tree=tree
+                    )
+
+        if separator != ";":
             sys.stdout.write("\n")
-        sys.stdout.flush()
 
     def let_statement(self, tree: Tree):
         variable_name, value_tree = tree.children[-2:]
@@ -441,7 +464,7 @@ class _ExpressionTransformer(Transformer):
         self._state = state
 
     @v_args(tree=True)
-    def literalexpr(self, tree: Tree):
+    def numliteralexpr(self, tree: Tree):
         token = tree.children[0]
         match token.type:
             case "BOOLEAN_LITERAL":
@@ -454,10 +477,13 @@ class _ExpressionTransformer(Transformer):
                 return np.int32(int(token, base=10))
             case "FLOAT_LITERAL":
                 return float(token)
-            case "STRING_LITERAL":
-                return token[1:-1].replace('""', '"')
             case _:  # pragma: no cover
                 raise InternalParserError("Unexpected literal type", tree=tree)
+
+    @v_args(tree=True)
+    def strliteralexpr(self, tree: Tree):
+        token = tree.children[0]
+        return token[1:-1].replace('""', '"')
 
     @v_args(tree=True)
     def unaryexpr(self, tree: Tree):

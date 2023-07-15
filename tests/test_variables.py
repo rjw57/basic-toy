@@ -7,6 +7,7 @@ from rwbasic.interpreter import BasicMistakeError, BasicValue, Interpreter
     "setup,expression,expected_value",
     [
         ("A=1:B=2", "A+B", 3),
+        ("RUNA=1", "RUNA", 1),
         ("A=1:LETA=A+1", "A", 2),
         ('NAME$="Jane":GREETING$="Hello, "', "GREETING$+NAME$", "Hello, Jane"),
         ("I%=1.2", "I%", 1),
