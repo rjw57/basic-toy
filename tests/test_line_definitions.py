@@ -30,8 +30,9 @@ def test_negative_line_number(interpreter: Interpreter):
 @pytest.fixture
 def program_lines(interpreter: Interpreter):
     lines = [
-        "20 REM some line",
+        "20 PRINT 20:REM original line",
         "10 PRINT 1234",
+        "20 REM replace the line",
         "15 PRINT 1:PRINT 2:REM comment to eol",
         "30 PRINT 1:PRINT 2:REM comment to eol ignores next PRINT:PRINT 4",
     ]
@@ -46,7 +47,7 @@ def test_line_count(program_lines):
 
 @pytest.mark.parametrize("line_number", [10, 15, 20, 30])
 def test_line_number_present(program_lines, line_number):
-    assert line_number in program_lines
+    assert len(list(program_lines.irange_key(line_number, line_number))) == 1
 
 
 @pytest.mark.parametrize(
@@ -59,4 +60,4 @@ def test_line_number_present(program_lines, line_number):
     ],
 )
 def test_line_number_statement_count(program_lines, line_number, statement_count):
-    assert len(program_lines[line_number]) == statement_count
+    assert [len(ln.statements) for ln in program_lines] == [1, 3, 1, 3]

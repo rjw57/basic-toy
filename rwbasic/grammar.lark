@@ -36,6 +36,7 @@ SEMICOLON: ";"
 // Keywords.
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
 LET: "LET"i
+NEW: "NEW"i
 PRINT: "PRINT"i
 REM: "REM"i
 RUN: "RUN"i
@@ -65,10 +66,12 @@ line_statements: (statement ":")* statement?
           | print_statement
           | let_statement
           | run_statement
+          | new_statement
 comment_statement: COMMENT
 print_statement: PRINT expression SEMICOLON?
 let_statement: LET? VARIABLE "=" expression
 run_statement: RUN
+new_statement: NEW
 
 // Expressions
 ?expression: orexpr
