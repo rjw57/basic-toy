@@ -39,13 +39,16 @@ class BasicError(RuntimeError):
 
 
 class BasicSyntaxError(BasicError):
-    def __init__(self, message: str, *, lark_exception: Exception, **kwargs):
-        super().__init__(message, **kwargs)
-        self._lark_exception = lark_exception
+    """
+    Raised when there is a syntax error. The __cause__ attribute will be the underlying lark
+    parser exception.
+    """
 
 
 class BasicMistakeError(BasicError):
-    pass
+    """
+    Raised when there was some runtime mistake.
+    """
 
 
 class InternalParserError(BasicError):
@@ -106,7 +109,7 @@ class Interpreter:
         try:
             tree = _EXPRESSION_PARSER.parse(expression)
         except UnexpectedInput as lark_exception:
-            raise BasicSyntaxError(str(lark_exception), lark_exception=lark_exception)
+            raise BasicSyntaxError(str(lark_exception)) from lark_exception
         self._parse_tree_interpreter.visit(tree)
         assert _is_basic_value(tree.data)
         return tree.data
@@ -115,7 +118,7 @@ class Interpreter:
         try:
             tree = _PROMPT_LINE_PARSER.parse(prompt_line)
         except UnexpectedInput as lark_exception:
-            raise BasicSyntaxError(str(lark_exception), lark_exception=lark_exception)
+            raise BasicSyntaxError(str(lark_exception)) from lark_exception
         self._parse_tree_interpreter.visit(tree)
 
 

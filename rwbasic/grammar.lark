@@ -5,9 +5,6 @@
 %import common (WS_INLINE)
 %ignore WS_INLINE
 
-// Comment body. Will match to end of line including any ":" characters.
-COMMENT_BODY: /[^\r\n]/+
-
 // Numeric literal tokens
 BOOLEAN_LITERAL: "TRUE"i | "FALSE"i
 BINARY_LITERAL: "%" ("0".."1")+
@@ -33,9 +30,13 @@ OROP: "OR"i | "EOR"i
 // Symbols
 SEMICOLON: ";"
 
-// Keywords
+// Keywords.
+// TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
 PRINT: "PRINT"i
 REM: "REM"i
+
+// Comment. Will match to end of line including any ":" characters.
+COMMENT: REM /[^\r\n]/*
 
 // Usually we start with a program
 ?start: program
@@ -50,10 +51,10 @@ program: (line_definition NEWLINE)* line_definition NEWLINE?
 line_definition: DECIMAL_LITERAL line_statements
 
 // Statements within a line.
-line_statements: (statement ":")* statement
+line_statements: (statement ":")* statement?
 ?statement: comment_statement
           | print_statement
-comment_statement: REM COMMENT_BODY?
+comment_statement: COMMENT
 print_statement: PRINT expression SEMICOLON?
 
 // Expressions
