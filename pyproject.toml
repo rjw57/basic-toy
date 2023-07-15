@@ -6,6 +6,7 @@ authors = ["Rich Wareham <rich@richwareham.com>"]
 license = "MIT"
 readme = "README.md"
 packages = [{include = "rwbasic"}]
+include = ["rwbasic/*.lark"]
 
 [tool.poetry.dependencies]
 python = "^3.10"

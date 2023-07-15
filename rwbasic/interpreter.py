@@ -1,17 +1,23 @@
+import importlib.resources
 import typing
 
 import numpy as np
-from lark import Tree, Visitor
-
-from .parser import EXPRESSION_PARSER
+from lark import Lark, Tree, Visitor
 
 BasicValue = typing.Union[np.int32, float, str]
+
+EXPRESSION_PARSER = Lark(
+    importlib.resources.files(__package__).joinpath("grammar.lark").read_text(),
+    start="expression",
+    parser="lalr",
+    propagate_positions=True,
+)
 
 
 class BasicError(RuntimeError):
     def __init__(self, message: str, tree: Tree):
         super().__init__(message)
-        self.tree = tree
+        self._tree = tree
 
 
 class InternalParserError(BasicError):
@@ -27,10 +33,11 @@ def _basic_bool(value: bool) -> BasicValue:
 
 
 class Interpreter:
+    def __init__(self):
+        self._expression_visitor = _ExpressionVisitor()
+
     def execute(self, input_line: str) -> typing.Optional[BasicValue]:
-        tree = EXPRESSION_PARSER.parse(input_line)
-        _ExpressionVisitor().visit(tree)
-        return tree.data
+        return self._expression_visitor.visit(EXPRESSION_PARSER.parse(input_line)).data
 
 
 class _ExpressionVisitor(Visitor):
