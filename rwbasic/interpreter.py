@@ -1,7 +1,7 @@
 import dataclasses
 import sys
 import typing
-from functools import cache
+from functools import cache, cached_property
 
 from lark import Lark, Token, Transformer, Tree
 from lark.exceptions import UnexpectedInput, VisitError
@@ -197,6 +197,10 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._state = state
         self._executing_from_prompt = executing_from_prompt
 
+    @cached_property
+    def _expression_transformer(self) -> "_ExpressionTransformer":
+        return _ExpressionTransformer(self._state)
+
     def _start_execution(self):
         # We should start executing with some start point.
         assert self._state.execution_location is not None
@@ -247,9 +251,9 @@ class _ParseTreeInterpreter(LarkInterpreter):
             # Move to next location.
             self._state.execution_location = self._state.next_execution_location
 
-    def _evaluate_expression(self, expression: Tree) -> BasicValue:
+    def evaluate_expression(self, expression: Tree) -> BasicValue:
         try:
-            value = _ExpressionTransformer(self._state).transform(expression)
+            value = self._expression_transformer.transform(expression)
         except VisitError as e:
             raise e.orig_exc
         assert _is_basic_value(value)
@@ -320,7 +324,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             else:
                 separator = " "
 
-            value = self._evaluate_expression(item_expression)
+            value = self.evaluate_expression(item_expression)
             sys.stdout.write(f"{value}")
             match separator:
                 case "'":
@@ -341,7 +345,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def let_statement(self, tree: Tree):
         variable_name = tree.children[-3]
         value_expression = tree.children[-1]
-        value = self._evaluate_expression(value_expression)
+        value = self.evaluate_expression(value_expression)
         self._set_variable(tree, variable_name, value)
 
     def _set_variable(self, tree: Tree, variable_name: str, value: BasicValue):
@@ -389,7 +393,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         except IndexError:
             step_expr = None
 
-        from_value = self._evaluate_expression(from_expr)
+        from_value = self.evaluate_expression(from_expr)
         if not _is_numeric_basic_value(from_value):
             raise BasicMistakeError("FOR from value must be numeric", tree=tree)
         self._set_variable(tree, var_name, from_value)
@@ -414,12 +418,12 @@ class _ParseTreeInterpreter(LarkInterpreter):
             if var_name != for_loop.variable_name:
                 raise BasicMistakeError(f"Unexpected NEXT variable: {var_name}", tree=tree)
 
-        to_value = self._evaluate_expression(for_loop.to_expression)
+        to_value = self.evaluate_expression(for_loop.to_expression)
         if not _is_numeric_basic_value(to_value):
             raise BasicMistakeError("FOR to value must be numeric", tree=for_loop.to_expression)
 
         if for_loop.step_expression is not None:
-            step = self._evaluate_expression(for_loop.step_expression)
+            step = self.evaluate_expression(for_loop.step_expression)
             if not _is_numeric_basic_value(step):
                 raise BasicMistakeError(
                     "FOR step value must be numeric", tree=for_loop.step_expression
