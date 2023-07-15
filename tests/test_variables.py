@@ -1,13 +1,17 @@
 import pytest
 
-from rwbasic.interpreter import BasicMistakeError, BasicValue, Interpreter
+from rwbasic.interpreter import (
+    BasicMistakeError,
+    BasicSyntaxError,
+    BasicValue,
+    Interpreter,
+)
 
 
 @pytest.mark.parametrize(
     "setup,expression,expected_value",
     [
         ("A=1:B=2", "A+B", 3),
-        ("RUNA=1", "RUNA", 1),
         ("A=1:LETA=A+1", "A", 2),
         ('NAME$="Jane":GREETING$="Hello, "', "GREETING$+NAME$", "Hello, Jane"),
         ("I%=1.2", "I%", 1),
@@ -33,6 +37,18 @@ def test_expected_output(
 )
 def test_mistake(interpreter: Interpreter, line: str):
     with pytest.raises(BasicMistakeError):
+        interpreter.execute(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Inappropriate names
+        "RUNA=1",
+    ],
+)
+def test_syntax(interpreter: Interpreter, line: str):
+    with pytest.raises(BasicSyntaxError):
         interpreter.execute(line)
 
 

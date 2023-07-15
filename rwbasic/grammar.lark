@@ -20,23 +20,25 @@ STRING_LITERAL: "\"" (/[^"]/ | "\"\"")* "\""
 // Variable reference. Low priority so we prefer matching terminals like TRUE and FALSE first.
 VARIABLE.-1: LETTER (LETTER | DIGIT)* ("$" | "%")?
 
-// Classes of operator tokens grouped by priority. Operators listed first are acted upon before
-// operators listed second and so on.
-UNARYOP: "+" | "-" | "NOT"i // TODO: indirection
 POWEROP: "^"
-MULOP: "*" | "/" | "DIV"i | "MOD"i
+MULOP: "*" | "/"
 ADDOP: "+" | "-"
-COMPOP: "=" | "<>" | "<" | ">" | "<=" | ">=" | "<<" | ">>" | ">>>"
-ANDOP: "AND"i
-OROP: "OR"i | "EOR"i
+EQUALS: "="
+COMPOP: "<>" | "<" | ">" | "<=" | ">=" | "<<" | ">>" | ">>>"
 
 // Keywords.
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
+AND: "AND"i
+DIV: "DIV"i
 END: "END"i
+EOR: "EOR"i
 FOR: "FOR"i
 LET: "LET"i
+MOD: "MOD"i
 NEW: "NEW"i
 NEXT: "NEXT"i
+NOT: "NOT"i
+OR: "OR"i
 PRINT: "PRINT"i
 REM: "REM"i
 RUN: "RUN"i
@@ -73,23 +75,29 @@ line_statements: (statement ":")* statement?
           | for_statement
           | next_statement
 comment_statement: COMMENT
-print_statement: PRINT (expression (" " | PRINT_ITEM_SEPARATOR))* expression?
-let_statement: LET? VARIABLE "=" expression
+print_statement: PRINT (expression+ PRINT_ITEM_SEPARATOR)* expression*
+let_statement: LET? VARIABLE EQUALS expression
 run_statement: RUN
 new_statement: NEW
 end_statement: END
-for_statement: FOR VARIABLE "=" expression TO expression (STEP expression)?
+for_statement: FOR VARIABLE EQUALS expression TO expression (STEP expression)?
 next_statement: NEXT VARIABLE?
 
 // Expressions
+?andop: AND
+?orop: OR | EOR
+?unaryop: ADDOP | NOT // TODO indirection
+?mulop: MULOP | DIV | MOD
+?compop: EQUALS | COMPOP
+
 ?expression: orexpr
-?orexpr: (andexpr OROP)* andexpr
-?andexpr: (compexpr ANDOP)* compexpr
-?compexpr: (addexpr COMPOP)* addexpr
+?orexpr: (andexpr orop)* andexpr
+?andexpr: (compexpr andop)* compexpr
+?compexpr: (addexpr compop)* addexpr
 ?addexpr: (mulexpr ADDOP)* mulexpr
-?mulexpr: (powerexpr MULOP)* powerexpr
+?mulexpr: (powerexpr mulop)* powerexpr
 ?powerexpr: (unaryexpr POWEROP)* unaryexpr
-?unaryexpr: UNARYOP* atomexpr
+?unaryexpr: unaryop* atomexpr
 ?atomexpr: "(" expression ")"
          | numliteralexpr
          | strliteralexpr

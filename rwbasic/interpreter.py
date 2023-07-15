@@ -19,6 +19,9 @@ def load_parser() -> Lark:
         __package__,
         "grammar.lark",
         propagate_positions=True,
+        parser="lalr",
+        lexer="basic",
+        cache=True,
         start=["program", "promptline", "expression"],
     )
 
@@ -336,8 +339,9 @@ class _ParseTreeInterpreter(LarkInterpreter):
             sys.stdout.write("\n")
 
     def let_statement(self, tree: Tree):
-        variable_name, value_tree = tree.children[-2:]
-        value = self._evaluate_expression(value_tree)
+        variable_name = tree.children[-3]
+        value_expression = tree.children[-1]
+        value = self._evaluate_expression(value_expression)
         self._set_variable(tree, variable_name, value)
 
     def _set_variable(self, tree: Tree, variable_name: str, value: BasicValue):
@@ -378,10 +382,10 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
     def for_statement(self, tree: Tree):
         var_name = tree.children[1]
-        from_expr = tree.children[2]
-        to_expr = tree.children[4]
+        from_expr = tree.children[3]
+        to_expr = tree.children[5]
         try:
-            step_expr = tree.children[6]
+            step_expr = tree.children[7]
         except IndexError:
             step_expr = None
 
