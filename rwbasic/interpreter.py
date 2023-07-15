@@ -106,7 +106,7 @@ def _basic_bool(value: bool) -> BasicValue:
 
 
 @dataclasses.dataclass
-class ExecutionLocation:
+class _ExecutionLocation:
     # Index of statement within execution line.
     statement_index: int
 
@@ -115,12 +115,12 @@ class ExecutionLocation:
 
 
 @dataclasses.dataclass
-class NumberedLine:
+class _NumberedLine:
     number: int
     statements: list[Tree]
 
 
-class _SortedNumberedLineList(SortedKeyList[NumberedLine]):
+class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
     def __init__(self, iterable=None):
         super().__init__(iterable=iterable, key=lambda nl: nl.number)
 
@@ -138,10 +138,10 @@ class _InterpreterState:
     prompt_line: typing.Optional[list[Tree]] = None
 
     # Current execution location or None if we're not executing at the moment.
-    execution_location: typing.Optional[ExecutionLocation] = None
+    execution_location: typing.Optional[_ExecutionLocation] = None
 
     # Execution location for next statement or None if we should stop execution.
-    next_execution_location: typing.Optional[ExecutionLocation] = None
+    next_execution_location: typing.Optional[_ExecutionLocation] = None
 
     def reset(self):
         """Reset state to defaults."""
@@ -158,35 +158,30 @@ class Interpreter:
     def __init__(self):
         self._state = _InterpreterState()
 
-    def load_program(self, program: str):
-        self.execute("NEW")
+    def _parse(self, parser: Lark, input_text: str) -> Tree:
         try:
-            tree = _PROGRAM_PARSER.parse(program)
+            return parser.parse(input_text)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception)) from lark_exception
-        _ParseTreeInterpreter(self._state).visit(tree)
+
+    def load_program(self, program: str):
+        self.execute("NEW")
+        _ParseTreeInterpreter(self._state).visit(self._parse(_PROGRAM_PARSER, program))
 
     def load_and_run_program(self, program: str):
         self.load_program(program)
         self.execute("RUN")
 
     def evaluate(self, expression: str) -> typing.Optional[BasicValue]:
-        try:
-            tree = _EXPRESSION_PARSER.parse(expression)
-        except UnexpectedInput as lark_exception:
-            raise BasicSyntaxError(str(lark_exception)) from lark_exception
+        tree = self._parse(_EXPRESSION_PARSER, expression)
         _ParseTreeInterpreter(self._state).visit(tree)
         assert _is_basic_value(tree.data)
         return tree.data
 
-    """Reset state to defaults."""
-
     def execute(self, prompt_line: str):
-        try:
-            tree = _PROMPT_LINE_PARSER.parse(prompt_line)
-        except UnexpectedInput as lark_exception:
-            raise BasicSyntaxError(str(lark_exception)) from lark_exception
-        _ParseTreeInterpreter(self._state, executing_from_prompt=True).visit(tree)
+        _ParseTreeInterpreter(self._state, executing_from_prompt=True).visit(
+            self._parse(_PROMPT_LINE_PARSER, prompt_line)
+        )
 
 
 class _ParseTreeInterpreter(LarkInterpreter):
@@ -214,7 +209,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
             if self._state.execution_location.statement_index + 1 < len(current_line_statements):
                 # Next statement is in the same line.
-                self._state.next_execution_location = ExecutionLocation(
+                self._state.next_execution_location = _ExecutionLocation(
                     line_index=self._state.execution_location.line_index,
                     statement_index=self._state.execution_location.statement_index + 1,
                 )
@@ -224,7 +219,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
                     # No more lines
                     self._state.next_execution_location = None
                 else:
-                    self._state.next_execution_location = ExecutionLocation(
+                    self._state.next_execution_location = _ExecutionLocation(
                         line_index=self._state.execution_location.line_index + 1,
                         statement_index=0,
                     )
@@ -273,7 +268,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
         # We store the individual statement trees as the line content. We replace any existing
         # lines with the same line number.
-        new_line = NumberedLine(number=line_number, statements=line_statements.children)
+        new_line = _NumberedLine(number=line_number, statements=line_statements.children)
         insert_index = self._state.lines.bisect_key_left(new_line.number)
         if (
             len(self._state.lines) > insert_index
@@ -289,7 +284,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
             # If there is at least one statement in the line, start execution.
             if len(tree.children) > 0:
-                self._state.execution_location = ExecutionLocation(statement_index=0)
+                self._state.execution_location = _ExecutionLocation(statement_index=0)
                 self._start_execution()
 
     def print_statement(self, tree: Tree):
@@ -330,7 +325,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             return
 
         # Start at first line
-        self._state.execution_location = ExecutionLocation(line_index=0, statement_index=0)
+        self._state.execution_location = _ExecutionLocation(line_index=0, statement_index=0)
         assert self._executing_from_prompt
         self._executing_from_prompt = False
         self._start_execution()
