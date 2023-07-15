@@ -4,9 +4,10 @@ import sys
 import typing
 
 import numpy as np
-from lark import Lark, Tree
-from lark.exceptions import UnexpectedInput
+from lark import Lark, Transformer, Tree
+from lark.exceptions import UnexpectedInput, VisitError
 from lark.visitors import Interpreter as LarkInterpreter
+from lark.visitors import v_args
 from sortedcontainers import SortedKeyList
 
 BasicValue = typing.Union[np.int32, float, str]
@@ -70,28 +71,28 @@ class InternalParserError(BasicError):
     pass
 
 
-def _is_integer_basic_value(value: BasicValue):
+def _is_integer_basic_value(value: BasicValue) -> typing.TypeGuard[np.int32]:
     """
     Return True if and only if value is an integer BASIC value.
     """
     return isinstance(value, np.int32)
 
 
-def _is_numeric_basic_value(value: BasicValue):
+def _is_numeric_basic_value(value: BasicValue) -> typing.TypeGuard[typing.Union[np.int32, float]]:
     """
     Return True if and only if value is a numeric BASIC value.
     """
     return _is_integer_basic_value(value) or isinstance(value, float)
 
 
-def _is_string_basic_value(value: BasicValue):
+def _is_string_basic_value(value: BasicValue) -> typing.TypeGuard[str]:
     """
     Return True if and only if value is a string BASIC value.
     """
     return isinstance(value, str)
 
 
-def _is_basic_value(value: BasicValue):
+def _is_basic_value(value: BasicValue) -> typing.TypeGuard[BasicValue]:
     """
     Return True if and only if value is a BASIC value.
     """
@@ -126,6 +127,14 @@ class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
 
 
 @dataclasses.dataclass
+class _ForLoopState:
+    variable_name: str
+    to_expression: Tree
+    step_expression: typing.Optional[Tree]
+    body_start_location: typing.Optional[_ExecutionLocation]
+
+
+@dataclasses.dataclass
 class _InterpreterState:
     # Mapping from variable name to current value.
     variables: dict[str, BasicValue] = dataclasses.field(default_factory=dict)
@@ -143,6 +152,9 @@ class _InterpreterState:
     # Execution location for next statement or None if we should stop execution.
     next_execution_location: typing.Optional[_ExecutionLocation] = None
 
+    # Live FOR loops with inner loop at the end of the list.
+    for_loops: list[_ForLoopState] = dataclasses.field(default_factory=list)
+
     def reset(self):
         """Reset state to defaults."""
         self.variables = dict()
@@ -150,6 +162,7 @@ class _InterpreterState:
         self.prompt_line = None
         self.execution_location = None
         self.next_execution_location = None
+        self.for_loops = []
 
 
 class Interpreter:
@@ -174,9 +187,12 @@ class Interpreter:
 
     def evaluate(self, expression: str) -> typing.Optional[BasicValue]:
         tree = self._parse(_EXPRESSION_PARSER, expression)
-        _ParseTreeInterpreter(self._state).visit(tree)
-        assert _is_basic_value(tree.data)
-        return tree.data
+        try:
+            value = _ExpressionTransformer(self._state).transform(tree)
+        except VisitError as e:
+            raise e.orig_exc
+        assert _is_basic_value(value)
+        return value
 
     def execute(self, prompt_line: str):
         _ParseTreeInterpreter(self._state, executing_from_prompt=True).visit(
@@ -235,8 +251,21 @@ class _ParseTreeInterpreter(LarkInterpreter):
                 ]
                 self.visit(current_statement)
 
+                # If we're about to end, make sure we don't have any dangling loops, etc.
+                if self._state.next_execution_location is None:
+                    if len(self._state.for_loops) > 0:
+                        raise BasicMistakeError("Missing NEXT", tree=current_statement)
+
             # Move to next location.
             self._state.execution_location = self._state.next_execution_location
+
+    def _evaluate_expression(self, expression: Tree) -> BasicValue:
+        try:
+            value = _ExpressionTransformer(self._state).transform(expression)
+        except VisitError as e:
+            raise e.orig_exc
+        assert _is_basic_value(value)
+        return value
 
     def numbered_line_definition(self, tree: Tree):
         line_number = int(tree.children[0])
@@ -288,20 +317,20 @@ class _ParseTreeInterpreter(LarkInterpreter):
                 self._start_execution()
 
     def print_statement(self, tree: Tree):
-        self.visit_children(tree)
-        assert _is_basic_value(tree.children[1].data)
-        sys.stdout.write(f"{tree.children[1].data}")
+        value = self._evaluate_expression(tree.children[1])
+        sys.stdout.write(f"{value}")
         if len(tree.children) == 2:
             # We don't have a terminal ";"
             sys.stdout.write("\n")
         sys.stdout.flush()
 
     def let_statement(self, tree: Tree):
-        self.visit_children(tree)
-        variable_name, value_node = tree.children[-2:]
-        value = value_node.data
-        assert _is_basic_value(value)
+        variable_name, value_tree = tree.children[-2:]
+        value = self._evaluate_expression(value_tree)
+        self._set_variable(tree, variable_name, value)
 
+    def _set_variable(self, tree: Tree, variable_name: str, value: BasicValue):
+        assert _is_basic_value(value)
         if variable_name.endswith("$") and not _is_string_basic_value(value):
             raise BasicMistakeError("Cannot assign non-string value to string variable", tree=tree)
         if not variable_name.endswith("$") and not _is_numeric_basic_value(value):
@@ -331,127 +360,213 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._start_execution()
         self._executing_from_prompt = True
 
+    def end_statement(self, tree: Tree):
+        if self._state.next_execution_location is None:
+            raise BasicMistakeError("END outside of program execution", tree=tree)
+        self._state.next_execution_location = None
+
+    def for_statement(self, tree: Tree):
+        var_name = tree.children[1]
+        from_expr = tree.children[2]
+        to_expr = tree.children[4]
+        try:
+            step_expr = tree.children[6]
+        except IndexError:
+            step_expr = None
+
+        from_value = self._evaluate_expression(from_expr)
+        if not _is_numeric_basic_value(from_value):
+            raise BasicMistakeError("FOR from value must be numeric", tree=tree)
+        self._set_variable(tree, var_name, from_value)
+
+        # TODO: do we care about repeated variable names?
+        self._state.for_loops.append(
+            _ForLoopState(
+                variable_name=var_name,
+                to_expression=to_expr,
+                step_expression=step_expr,
+                body_start_location=self._state.next_execution_location,
+            )
+        )
+
+    def next_statement(self, tree: Tree):
+        if len(self._state.for_loops) == 0:
+            raise BasicMistakeError("NEXT outside of FOR", tree=tree)
+
+        for_loop = self._state.for_loops[-1]
+        if len(tree.children) > 1:
+            var_name = tree.children[1]
+            if var_name != for_loop.variable_name:
+                raise BasicMistakeError(f"Unexpected NEXT variable: {var_name}", tree=tree)
+
+        to_value = self._evaluate_expression(for_loop.to_expression)
+        if not _is_numeric_basic_value(to_value):
+            raise BasicMistakeError("FOR to value must be numeric", tree=for_loop.to_expression)
+
+        if for_loop.step_expression is not None:
+            step = self._evaluate_expression(for_loop.step_expression)
+            if not _is_numeric_basic_value(step):
+                raise BasicMistakeError(
+                    "FOR step value must be numeric", tree=for_loop.step_expression
+                )
+        else:
+            step = np.int32(1)
+
+        index_value = self._state.variables[for_loop.variable_name]
+        assert _is_numeric_basic_value(index_value)
+        next_index = index_value + step
+        self._set_variable(tree, for_loop.variable_name, next_index)
+
+        # Do we loop?
+        should_loop = False
+        if step >= 0 and next_index <= to_value:
+            should_loop = True
+        elif step < 0 and next_index >= to_value:
+            should_loop = True
+
+        if should_loop:
+            self._state.next_execution_location = for_loop.body_start_location
+        else:
+            self._state.for_loops.pop()
+
+
+class _ExpressionTransformer(Transformer):
+    """
+    Transformer which evaluates expressions given the current interpreter state.
+    """
+
+    _state: _InterpreterState
+
+    def __init__(self, state: _InterpreterState):
+        self._state = state
+
+    @v_args(tree=True)
     def literalexpr(self, tree: Tree):
         token = tree.children[0]
         match token.type:
             case "BOOLEAN_LITERAL":
-                tree.data = _basic_bool(token.upper() == "TRUE")
+                return _basic_bool(token.upper() == "TRUE")
             case "BINARY_LITERAL":
-                tree.data = np.int32(int(token[1:], base=2))
+                return np.int32(int(token[1:], base=2))
             case "HEX_LITERAL":
-                tree.data = np.int32(int(token[1:], base=16))
+                return np.int32(int(token[1:], base=16))
             case "DECIMAL_LITERAL":
-                tree.data = np.int32(int(token, base=10))
+                return np.int32(int(token, base=10))
             case "FLOAT_LITERAL":
-                tree.data = float(token)
+                return float(token)
             case "STRING_LITERAL":
-                tree.data = token[1:-1].replace('""', '"')
+                return token[1:-1].replace('""', '"')
             case _:  # pragma: no cover
                 raise InternalParserError("Unexpected literal type", tree=tree)
 
+    @v_args(tree=True)
     def unaryexpr(self, tree: Tree):
-        self.visit_children(tree)
         children = list(tree.children)
         rhs = children.pop()
-        tree.data = rhs.data
         while len(children) > 0:
             op = children.pop().upper()
             # All unary operators need numeric input.
-            if not _is_numeric_basic_value(rhs.data):
-                raise BasicMistakeError(f"Inappropriate type for unary operation {op}", tree=rhs)
+            if not _is_numeric_basic_value(rhs):
+                raise BasicMistakeError(f"Inappropriate type for unary operation {op}", tree=tree)
             match op:
                 case "+":
                     pass  # Do nothing
                 case "-":
-                    tree.data = -tree.data
+                    rhs = -rhs
                 case "NOT":
-                    tree.data = np.int32(tree.data ^ np.uint32(0xFFFFFFFF))
+                    rhs = np.int32(rhs ^ np.uint32(0xFFFFFFFF))
                 case _:  # pragma: no cover
                     raise InternalParserError(f"Unknown unary operator: {op}", tree=tree)
-        assert _is_numeric_basic_value(tree.data)
+        assert _is_numeric_basic_value(rhs)
+        return rhs
 
+    @v_args(tree=True)
     def powerexpr(self, tree: Tree):
         return self._binaryopexpr(tree)
 
+    @v_args(tree=True)
     def mulexpr(self, tree: Tree):
         return self._binaryopexpr(tree)
 
+    @v_args(tree=True)
     def addexpr(self, tree: Tree):
         return self._binaryopexpr(tree)
 
+    @v_args(tree=True)
     def compexpr(self, tree: Tree):
         return self._binaryopexpr(tree)
 
+    @v_args(tree=True)
     def andexpr(self, tree: Tree):
         return self._binaryopexpr(tree)
 
+    @v_args(tree=True)
     def orexpr(self, tree: Tree):
         return self._binaryopexpr(tree)
 
     def _binaryopexpr(self, tree: Tree):
-        self.visit_children(tree)
         children = list(tree.children)
         rhs = children.pop()
-        tree.data = rhs.data
         while len(children) > 0:
             op = children.pop().upper()
-            if op not in _STRING_BINARY_OPS and not _is_numeric_basic_value(rhs.data):
-                raise BasicMistakeError(f"Inappropriate type for operation {op}", tree=rhs)
+            if op not in _STRING_BINARY_OPS and not _is_numeric_basic_value(rhs):
+                raise BasicMistakeError(f"Inappropriate type for operation {op}", tree=tree)
             lhs = children.pop()
-            if _is_numeric_basic_value(lhs.data) != _is_numeric_basic_value(rhs.data):
+            if _is_numeric_basic_value(lhs) != _is_numeric_basic_value(rhs):
                 raise BasicMistakeError(f"Cannot mix types for operator {op}", tree=tree)
             match op:
                 case "+":
-                    tree.data = lhs.data + tree.data
+                    rhs = lhs + rhs
                 case "-":
-                    tree.data = lhs.data - tree.data
+                    rhs = lhs - rhs
                 case "*":
-                    tree.data = lhs.data * tree.data
+                    rhs = lhs * rhs
                 case "/":
-                    tree.data = lhs.data / tree.data
+                    rhs = lhs / rhs
                 case "DIV":
-                    tree.data = lhs.data // tree.data
+                    rhs = lhs // rhs
                 case "MOD":
-                    tree.data = lhs.data % tree.data
+                    rhs = lhs % rhs
                 case "AND":
-                    tree.data = lhs.data & tree.data
+                    rhs = lhs & rhs
                 case "OR":
-                    tree.data = lhs.data | tree.data
+                    rhs = lhs | rhs
                 case "EOR":
-                    tree.data = lhs.data ^ tree.data
+                    rhs = lhs ^ rhs
                 case "=":
-                    tree.data = _basic_bool(lhs.data == tree.data)
+                    rhs = _basic_bool(lhs == rhs)
                 case "<>":
-                    tree.data = _basic_bool(lhs.data != tree.data)
+                    rhs = _basic_bool(lhs != rhs)
                 case "<":
-                    tree.data = _basic_bool(lhs.data < tree.data)
+                    rhs = _basic_bool(lhs < rhs)
                 case ">":
-                    tree.data = _basic_bool(lhs.data > tree.data)
+                    rhs = _basic_bool(lhs > rhs)
                 case "<=":
-                    tree.data = _basic_bool(lhs.data <= tree.data)
+                    rhs = _basic_bool(lhs <= rhs)
                 case ">=":
-                    tree.data = _basic_bool(lhs.data >= tree.data)
+                    rhs = _basic_bool(lhs >= rhs)
                 case "<<":
-                    tree.data = lhs.data << tree.data
+                    rhs = lhs << rhs
                 case ">>":
                     # Arithmetic shift right is a little bit complicated in Python(!)
-                    tree.data = (lhs.data >> tree.data) | np.int32(
-                        (np.uint32(0xFFFFFFFF >> tree.data)) ^ np.uint32(0xFFFFFFFF)
-                        if lhs.data & 0x80000000
+                    rhs = (lhs >> rhs) | np.int32(
+                        (np.uint32(0xFFFFFFFF >> rhs)) ^ np.uint32(0xFFFFFFFF)
+                        if lhs & 0x80000000
                         else 0
                     )
                 case ">>>":
-                    tree.data = lhs.data >> tree.data
+                    rhs = lhs >> rhs
                 case "^":
-                    tree.data = lhs.data**tree.data
+                    rhs = lhs**rhs
                 case _:  # pragma: no cover
                     raise InternalParserError(f"Unknown binary operator: {op}", tree=tree)
-            rhs = lhs
-        assert _is_basic_value(tree.data), f"Non-numeric output: {tree.data!r}"
+        assert _is_basic_value(rhs), f"Non-numeric output: {rhs!r}"
+        return rhs
 
+    @v_args(tree=True)
     def variablerefexpr(self, tree: Tree):
         variable_name = tree.children[0]
         try:
-            tree.data = self._state.variables[variable_name]
+            return self._state.variables[variable_name]
         except KeyError:
             raise BasicMistakeError(f"No such variable: {variable_name}", tree=tree)

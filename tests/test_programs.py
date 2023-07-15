@@ -15,6 +15,7 @@ from rwbasic.interpreter import (
         ('10\n20PRINT"Hello, ";\n30\n40PRINT"world"', "Hello, world\n"),
         ('PRINT"Hello, ";\nPRINT"world"', "Hello, world\n"),
         ("", ""),
+        ("PRINT1\nPRINT2\nEND\nPRINT3", "1\n2\n"),
     ],
 )
 def test_expected_output(interpreter: Interpreter, program: str, expected_output: str, capsys):
@@ -63,3 +64,9 @@ def test_mistake_when_running(interpreter: Interpreter, program: str):
 def test_empty_program(interpreter: Interpreter):
     """Can RUN with no program."""
     interpreter.execute("RUN")
+
+
+def test_no_naked_end(interpreter: Interpreter):
+    """Cannot have END without being in a program."""
+    with pytest.raises(BasicMistakeError):
+        interpreter.execute("END")

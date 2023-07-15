@@ -35,11 +35,16 @@ SEMICOLON: ";"
 
 // Keywords.
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
+END: "END"i
+FOR: "FOR"i
 LET: "LET"i
 NEW: "NEW"i
+NEXT: "NEXT"i
 PRINT: "PRINT"i
 REM: "REM"i
 RUN: "RUN"i
+STEP: "STEP"i
+TO: "TO"i
 
 // Comment. Will match to end of line including any ":" characters.
 COMMENT: REM /[^\r\n]/*
@@ -67,11 +72,17 @@ line_statements: (statement ":")* statement?
           | let_statement
           | run_statement
           | new_statement
+          | end_statement
+          | for_statement
+          | next_statement
 comment_statement: COMMENT
 print_statement: PRINT expression SEMICOLON?
 let_statement: LET? VARIABLE "=" expression
 run_statement: RUN
 new_statement: NEW
+end_statement: END
+for_statement: FOR VARIABLE "=" expression TO expression (STEP expression)?
+next_statement: NEXT VARIABLE?
 
 // Expressions
 ?expression: orexpr
