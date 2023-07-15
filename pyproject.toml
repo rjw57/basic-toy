@@ -18,6 +18,7 @@ structlog = "^23.1.0"
 numpy = "^1.25.1"
 prompt-toolkit = "^3.0.39"
 better-exceptions = "^0.3.3"
+pygments = "^2.15.1"
 
 
 [tool.poetry.group.dev.dependencies]

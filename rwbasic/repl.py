@@ -6,8 +6,13 @@ import typing
 
 from better_exceptions import format_exception
 from prompt_toolkit import PromptSession, print_formatted_text
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.lexers import PygmentsLexer
 from prompt_toolkit.styles import Style
+from prompt_toolkit.styles.pygments import style_from_pygments_cls
+from pygments.lexers.basic import BBCBasicLexer
+from pygments.styles import get_style_by_name
 
 from .interpreter import BasicError, Interpreter
 
@@ -24,9 +29,17 @@ class ReplSession:
         self._interpreter = Interpreter()
 
     def run(self):
+        # TODO: let style by configurable
+        style = style_from_pygments_cls(get_style_by_name("solarized-dark"))
         while True:
             try:
-                prompt_line = self._prompt_session.prompt(">")
+                prompt_line = self._prompt_session.prompt(
+                    ">",
+                    lexer=PygmentsLexer(BBCBasicLexer),
+                    style=style,
+                    include_default_pygments_style=False,
+                    auto_suggest=AutoSuggestFromHistory(),
+                )
                 self._interpreter.execute(prompt_line)
             except BasicError as err:
                 self._print_error(str(err))
