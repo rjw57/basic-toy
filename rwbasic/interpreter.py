@@ -138,10 +138,6 @@ class _InterpreterState:
     # Lines which make up the current program.
     lines: _SortedNumberedLineList = dataclasses.field(default_factory=_SortedNumberedLineList)
 
-    # The most recent line passed as an immediate line to execute in the prompt. May be None if
-    # there is no such line.
-    prompt_line: typing.Optional[list[Tree]] = None
-
     # Current execution location or None if we're not executing at the moment.
     execution_location: typing.Optional[_ExecutionLocation] = None
 
@@ -155,7 +151,6 @@ class _InterpreterState:
         """Reset state to defaults."""
         self.variables = dict()
         self.lines = _SortedNumberedLineList()
-        self.prompt_line = None
         self.execution_location = None
         self.next_execution_location = None
         self.block_states = []
@@ -167,6 +162,14 @@ class Interpreter:
     def __init__(self):
         self._state = _InterpreterState()
 
+    @cached_property
+    def _parse_tree_interpreter(self) -> "_ParseTreeInterpreter":
+        return _ParseTreeInterpreter(self._state)
+
+    @cached_property
+    def _expression_transformer(self) -> "_ExpressionTransformer":
+        return _ExpressionTransformer(self._state)
+
     def _parse(self, input_text: str, **kwargs) -> Tree:
         try:
             return load_parser().parse(input_text, **kwargs)
@@ -175,7 +178,7 @@ class Interpreter:
 
     def load_program(self, program: str):
         self.execute("NEW")
-        _ParseTreeInterpreter(self._state).visit(self._parse(program, start="program"))
+        self._parse_tree_interpreter.visit(self._parse(program, start="program"))
 
     def load_and_run_program(self, program: str):
         self.load_program(program)
@@ -184,44 +187,37 @@ class Interpreter:
     def evaluate(self, expression: str) -> typing.Optional[BasicValue]:
         tree = self._parse(expression, start="expression")
         try:
-            value = _ExpressionTransformer(self._state).transform(tree)
+            value = self._expression_transformer.transform(tree)
         except VisitError as e:
             raise e.orig_exc
         assert _is_basic_value(value)
         return value
 
     def execute(self, prompt_line: str):
-        _ParseTreeInterpreter(self._state, executing_from_prompt=True).visit(
-            self._parse(prompt_line, start="promptline")
-        )
+        self._parse_tree_interpreter.visit(self._parse(prompt_line, start="promptline"))
 
 
 class _ParseTreeInterpreter(LarkInterpreter):
     _state: _InterpreterState
-    _executing_from_prompt: bool
 
-    def __init__(self, state: _InterpreterState, *, executing_from_prompt=False):
+    def __init__(self, state: _InterpreterState):
         super().__init__()
         self._state = state
-        self._executing_from_prompt = executing_from_prompt
 
     @cached_property
     def _expression_transformer(self) -> "_ExpressionTransformer":
         return _ExpressionTransformer(self._state)
 
     def _start_execution(self):
-        # We should start executing with some start point.
+        # We should start executing with some start point within the program.
         assert self._state.execution_location is not None
+        assert self._state.execution_location.line_index is not None
 
         # Keep going until we run out of program.
         while self._state.execution_location is not None:
-            # Assume the next execution location will be the next statement.
-            if self._state.execution_location.line_index is None:
-                current_line_statements = self._state.prompt_line
-            else:
-                current_line_statements = self._state.lines[
-                    self._state.execution_location.line_index
-                ].statements
+            current_line_statements = self._state.lines[
+                self._state.execution_location.line_index
+            ].statements
 
             if self._state.execution_location.statement_index + 1 < len(current_line_statements):
                 # Next statement is in the same line.
@@ -229,7 +225,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
                     line_index=self._state.execution_location.line_index,
                     statement_index=self._state.execution_location.statement_index + 1,
                 )
-            elif self._state.execution_location.line_index is not None:
+            else:
                 # Move to next line.
                 if self._state.execution_location.line_index + 1 >= len(self._state.lines):
                     # No more lines
@@ -239,9 +235,6 @@ class _ParseTreeInterpreter(LarkInterpreter):
                         line_index=self._state.execution_location.line_index + 1,
                         statement_index=0,
                     )
-            else:
-                # At end of prompt line.
-                self._state.next_execution_location = None
 
             # Execute the current statement if there are any on this line. We have the check
             # because we might have an execution location pointing to the start of an empty line.
@@ -269,11 +262,16 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
     def numbered_line_definition(self, tree: Tree):
         line_number = int(tree.children[0])
+        if len(self._state.lines) > 0 and line_number <= self._state.lines[-1].number:
+            raise BasicBadProgramError("Line numbers must increase in programs", tree=tree)
+        self._add_line_definition(line_number, tree.children[1])
+
+    def numbered_line_update(self, tree: Tree):
+        line_number = int(tree.children[0])
         self._add_line_definition(line_number, tree.children[1])
 
     def unnumbered_line_definition(self, tree: Tree):
         # Unnumbered lines in programs get numbered automagically.
-        assert not self._executing_from_prompt
         if len(self._state.lines) == 0:
             line_number = 1
         else:
@@ -284,15 +282,6 @@ class _ParseTreeInterpreter(LarkInterpreter):
         if line_number <= 0:
             raise BasicBadProgramError(
                 "Line numbers must be greater than zero", tree=line_statements
-            )
-        # If we're not in the interactive prompt, line numbers must strictly increase
-        if (
-            not self._executing_from_prompt
-            and len(self._state.lines) > 0
-            and line_number <= self._state.lines[-1].number
-        ):
-            raise BasicBadProgramError(
-                "Line numbers must increase in programs", tree=line_statements
             )
 
         # We store the individual statement trees as the line content. We replace any existing
@@ -306,14 +295,13 @@ class _ParseTreeInterpreter(LarkInterpreter):
             del self._state.lines[insert_index]
         self._state.lines.add(new_line)
 
-    def prompt_line_statements(self, tree: Tree):
-        assert self._executing_from_prompt
-        self._state.prompt_line = tree.children
+    def _execute_inline_statements(self, statements: list[Tree]):
+        for statement in statements:
+            self.visit(statement)
 
-        # If there is at least one statement in the line, start execution.
-        if len(tree.children) > 0:
-            self._state.execution_location = _ExecutionLocation(statement_index=0)
-            self._start_execution()
+    def prompt_line_statements(self, tree: Tree):
+        # Execute statements within line.
+        self._execute_inline_statements(tree.children)
 
     def print_statement(self, tree: Tree):
         item_index = 1
@@ -367,36 +355,80 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._state.variables[variable_name] = value
 
     def new_statement(self, tree: Tree):
-        assert self._executing_from_prompt
         self._state.reset()
 
     def run_statement(self, tree: Tree):
-        assert self._executing_from_prompt
-
         # Nothing to do if there is no program.
         if len(self._state.lines) == 0:
             return
 
         # Start at first line
         self._state.execution_location = _ExecutionLocation(line_index=0, statement_index=0)
-        assert self._executing_from_prompt
-        self._executing_from_prompt = False
         self._start_execution()
-        self._executing_from_prompt = True
 
     def end_statement(self, tree: Tree):
-        if self._state.next_execution_location is None:
-            raise BasicMistakeError("END outside of program execution", tree=tree)
         self._state.next_execution_location = None
 
-    def for_statement(self, tree: Tree):
-        var_name = tree.children[1]
-        from_expr = tree.children[3]
-        to_expr = tree.children[5]
+    def _unpack_for_statement(self, for_statement: Tree):
+        var_name = for_statement.children[1]
+        from_expr = for_statement.children[3]
+        to_expr = for_statement.children[5]
         try:
-            step_expr = tree.children[7]
+            step_expr = for_statement.children[7]
         except IndexError:
             step_expr = None
+        return var_name, from_expr, to_expr, step_expr
+
+    def inline_for_statement(self, tree: Tree):
+        loop_defn = tree.children[0]
+        statements = tree.children[1:-1]
+        matching_next = tree.children[-1]
+
+        # Extract variable name and loop expressions.
+        var_name, from_expr, to_expr, step_expr = self._unpack_for_statement(loop_defn)
+
+        # Check next variable, if defined, matches the for loop one.
+        if len(matching_next.children) > 1:
+            if matching_next.children[1] != var_name:
+                raise BasicMistakeError("Mismatched NEXT", tree=matching_next)
+
+        # Set loop variable.
+        from_value = self.evaluate_expression(from_expr)
+        if not _is_numeric_basic_value(from_value):
+            raise BasicMistakeError("FOR start value must be numeric", tree=tree)
+        self._set_variable(tree, var_name, from_value)
+
+        keep_looping = True
+        while keep_looping:
+            # Execute body.
+            self._execute_inline_statements(statements)
+
+            # Advance index
+            if step_expr is not None:
+                step = self.evaluate_expression(step_expr)
+                if not _is_numeric_basic_value(step):
+                    raise BasicMistakeError("FOR step value must be numeric", tree=step_expr)
+            else:
+                step = int32(1)
+
+            index_value = self._state.variables[var_name]
+            assert _is_numeric_basic_value(index_value)
+            next_index = index_value + step
+
+            # Should we keep looping?
+            to_value = self.evaluate_expression(to_expr)
+            if not _is_numeric_basic_value(to_value):
+                raise BasicMistakeError("FOR end value must be numeric", tree=to_expr)
+            if step >= 0 and next_index > to_value:
+                keep_looping = False
+            elif step < 0 and next_index < to_value:
+                keep_looping = False
+            else:
+                self._set_variable(tree, var_name, next_index)
+
+    def for_statement(self, tree: Tree):
+        # Extract variable name and loop expressions.
+        var_name, from_expr, to_expr, step_expr = self._unpack_for_statement(tree)
 
         from_value = self.evaluate_expression(from_expr)
         if not _is_numeric_basic_value(from_value):
@@ -446,7 +478,6 @@ class _ParseTreeInterpreter(LarkInterpreter):
         index_value = self._state.variables[block_state.variable_name]
         assert _is_numeric_basic_value(index_value)
         next_index = index_value + step
-        self._set_variable(tree, block_state.variable_name, next_index)
 
         # Do we loop?
         should_loop = False
@@ -456,6 +487,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             should_loop = True
 
         if should_loop:
+            self._set_variable(tree, block_state.variable_name, next_index)
             self._state.next_execution_location = block_state.body_start_location
         else:
             self._state.block_states.pop()

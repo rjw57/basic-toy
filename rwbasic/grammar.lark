@@ -56,16 +56,21 @@ program: (program_line NEWLINE)* program_line
 ?program_line: numbered_line_definition | unnumbered_line_definition
 unnumbered_line_definition: line_definition_statements
 numbered_line_definition: DECIMAL_LITERAL line_definition_statements
+line_definition_statements: (line_definition_statement ":")* line_definition_statement?
 
 // Input to the interactive prompt
-?promptline: numbered_line_definition | prompt_line_statements
+?promptline: numbered_line_update
+           | prompt_line_statements
+numbered_line_update: DECIMAL_LITERAL line_definition_statements
+prompt_line_statements: (prompt_line_statement ":")* prompt_line_statement?
 
 // Statements which can appear in line definitions.
-line_definition_statements: (line_definition_statement ":")* line_definition_statement?
 ?line_definition_statement: statement
+                          | end_statement
+                          | for_statement
+                          | next_statement
 
 // Statements which can appear in the prompt line.
-prompt_line_statements: (prompt_line_statement ":")* prompt_line_statement?
 ?prompt_line_statement: statement
                       | new_statement
                       | run_statement
@@ -74,9 +79,7 @@ prompt_line_statements: (prompt_line_statement ":")* prompt_line_statement?
 ?statement: comment_statement
           | print_statement
           | let_statement
-          | end_statement
-          | for_statement
-          | next_statement
+          | inline_for_statement
 
 comment_statement: COMMENT
 print_statement: PRINT (expression+ PRINT_ITEM_SEPARATOR)* expression*
@@ -86,6 +89,9 @@ new_statement: NEW
 end_statement: END
 for_statement: FOR VARIABLE EQUALS expression TO expression (STEP expression)?
 next_statement: NEXT VARIABLE?
+
+// Inline FOR loop, can appear in prompt lines or programs but covers only one line.
+inline_for_statement: for_statement ":" (statement ":")* next_statement
 
 // Expressions
 ?andop: AND

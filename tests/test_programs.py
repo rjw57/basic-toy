@@ -1,11 +1,6 @@
 import pytest
 
-from rwbasic.interpreter import (
-    BasicBadProgramError,
-    BasicMistakeError,
-    BasicSyntaxError,
-    Interpreter,
-)
+from rwbasic.interpreter import BasicBadProgramError, BasicSyntaxError, Interpreter
 
 
 @pytest.mark.parametrize(
@@ -58,5 +53,5 @@ def test_empty_program(interpreter: Interpreter):
 
 def test_no_naked_end(interpreter: Interpreter):
     """Cannot have END without being in a program."""
-    with pytest.raises(BasicMistakeError):
+    with pytest.raises(BasicSyntaxError):
         interpreter.execute("END")
