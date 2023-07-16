@@ -66,7 +66,6 @@ program: (program_line NEWLINE)* program_line
 ?program_line: numbered_line_definition | unnumbered_line_definition
 unnumbered_line_definition: line_definition_statements
 numbered_line_definition: DECIMAL_LITERAL line_definition_statements
-line_definition_statements: (line_definition_statement ":")* line_definition_statement?
 
 // Input to the interactive prompt
 ?promptline: numbered_line_update
@@ -74,11 +73,23 @@ line_definition_statements: (line_definition_statement ":")* line_definition_sta
 numbered_line_update: DECIMAL_LITERAL line_definition_statements
 prompt_line_statements: (prompt_line_statement ":")* prompt_line_statement?
 
-// Statements which can appear in line definitions.
+line_definition_statements: (line_definition_initial_statement ":")? \
+                                (line_definition_statement ":")* \
+                                (line_definition_statement | line_definition_final_statement)?
+                          | line_definition_initial_statement
+
+// Statements which can appear anywhere in line definitions.
 ?line_definition_statement: statement
                           | end_statement
                           | for_statement
                           | next_statement
+
+// Statements which can appear in line definitions but only at the start
+?line_definition_initial_statement: else_statement
+                                  | endif_statement
+
+// Statements which can appear in line definitions but only at the end
+?line_definition_final_statement: if_statement
 
 // Statements which can appear in the prompt line.
 ?prompt_line_statement: statement
@@ -100,6 +111,9 @@ new_statement: NEW
 end_statement: END
 for_statement: FOR VARIABLE EQUALS expression TO expression (STEP expression)?
 next_statement: NEXT VARIABLE?
+if_statement: IF expression THEN
+else_statement: ELSE
+endif_statement: ENDIF
 
 // Inline FOR loop, can appear in prompt lines or programs but covers only one line.
 inline_for_statement: for_statement ":" (statement ":")* next_statement

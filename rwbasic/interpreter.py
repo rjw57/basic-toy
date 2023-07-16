@@ -4,7 +4,7 @@ import sys
 import typing
 from functools import cache, cached_property
 
-from lark import Lark, Token, Transformer, Tree
+from lark import Lark, Token, Transformer, Tree, Visitor
 from lark.exceptions import UnexpectedInput, VisitError
 from lark.visitors import Interpreter as LarkInterpreter
 from lark.visitors import v_args
@@ -101,7 +101,7 @@ class _ExecutionLocation:
     statement_index: int
 
     # Index of line within the program. None indicates we're executing in the prompt line.
-    line_index: typing.Optional[int] = None
+    line_index: int
 
 
 @dataclasses.dataclass
@@ -122,12 +122,21 @@ class _BlockType(enum.Enum):
 @dataclasses.dataclass
 class _BlockState:
     block_type: _BlockType
-    body_start_location: typing.Optional[_ExecutionLocation]
+    body_start_location: _ExecutionLocation
 
     # For loops
     variable_name: typing.Optional[str]
     to_expression: typing.Optional[Tree]
     step_expression: typing.Optional[Tree]
+
+
+@dataclasses.dataclass
+class _ProgramAnalysis:
+    # Mapping from IF statement trees to locations to jump to if condition *NOT* met.
+    if_jump_targets: dict[Tree, _ExecutionLocation] = dataclasses.field(default_factory=dict)
+
+    # Mapping from ELSE statement trees to location to jump to if we fall into it.
+    else_jump_targets: dict[Tree, _ExecutionLocation] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -147,6 +156,9 @@ class _InterpreterState:
     # Live blocks. Innermost block is at the end of the list.
     block_states: list[_BlockState] = dataclasses.field(default_factory=list)
 
+    # Analysis of the current program.
+    program_analysis: _ProgramAnalysis = dataclasses.field(default_factory=_ProgramAnalysis)
+
     def reset(self):
         """Reset state to defaults."""
         self.variables = dict()
@@ -154,6 +166,7 @@ class _InterpreterState:
         self.execution_location = None
         self.next_execution_location = None
         self.block_states = []
+        self.program_analysis = _ProgramAnalysis()
 
 
 class Interpreter:
@@ -189,7 +202,7 @@ class Interpreter:
         try:
             value = self._expression_transformer.transform(tree)
         except VisitError as e:
-            raise e.orig_exc
+            raise e.orig_exc from e
         assert _is_basic_value(value)
         return value
 
@@ -208,55 +221,11 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def _expression_transformer(self) -> "_ExpressionTransformer":
         return _ExpressionTransformer(self._state)
 
-    def _start_execution(self):
-        # We should start executing with some start point within the program.
-        assert self._state.execution_location is not None
-        assert self._state.execution_location.line_index is not None
-
-        # Keep going until we run out of program.
-        while self._state.execution_location is not None:
-            current_line_statements = self._state.lines[
-                self._state.execution_location.line_index
-            ].statements
-
-            if self._state.execution_location.statement_index + 1 < len(current_line_statements):
-                # Next statement is in the same line.
-                self._state.next_execution_location = _ExecutionLocation(
-                    line_index=self._state.execution_location.line_index,
-                    statement_index=self._state.execution_location.statement_index + 1,
-                )
-            else:
-                # Move to next line.
-                if self._state.execution_location.line_index + 1 >= len(self._state.lines):
-                    # No more lines
-                    self._state.next_execution_location = None
-                else:
-                    self._state.next_execution_location = _ExecutionLocation(
-                        line_index=self._state.execution_location.line_index + 1,
-                        statement_index=0,
-                    )
-
-            # Execute the current statement if there are any on this line. We have the check
-            # because we might have an execution location pointing to the start of an empty line.
-            if len(current_line_statements) > 0:
-                current_statement = current_line_statements[
-                    self._state.execution_location.statement_index
-                ]
-                self.visit(current_statement)
-
-                # If we're about to end, make sure we don't have any dangling loops, etc.
-                if self._state.next_execution_location is None:
-                    if len(self._state.block_states) > 0:
-                        raise BasicMistakeError("Missing block close", tree=current_statement)
-
-            # Move to next location.
-            self._state.execution_location = self._state.next_execution_location
-
     def evaluate_expression(self, expression: Tree) -> BasicValue:
         try:
             value = self._expression_transformer.transform(expression)
         except VisitError as e:
-            raise e.orig_exc
+            raise e.orig_exc from e
         assert _is_basic_value(value)
         return value
 
@@ -364,7 +333,49 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
         # Start at first line
         self._state.execution_location = _ExecutionLocation(line_index=0, statement_index=0)
-        self._start_execution()
+
+        # Analyse program loops, etc.
+        analysis_visitor = _ProgramAnalysisVisitor()
+        analysis_visitor.analyse_lines(self._state.lines)
+        self._state.program_analysis = analysis_visitor.analysis
+
+        # Keep going until we run out of program or the END statement sets the next location to
+        # None.
+        while self._state.execution_location is not None:
+            try:
+                current_line_statements = self._state.lines[
+                    self._state.execution_location.line_index
+                ].statements
+            except IndexError:
+                # We fell off the bottom of the program, exit the execution loop.
+                break
+
+            try:
+                current_statement = current_line_statements[
+                    self._state.execution_location.statement_index
+                ]
+            except IndexError:
+                # We fell off the line, move to next line and loop.
+                self._state.execution_location = _ExecutionLocation(
+                    line_index=self._state.execution_location.line_index + 1, statement_index=0
+                )
+                continue
+
+            # Prepare the expected next location to be the following statement.
+            self._state.next_execution_location = _ExecutionLocation(
+                line_index=self._state.execution_location.line_index,
+                statement_index=self._state.execution_location.statement_index + 1,
+            )
+
+            # Execute the current statement.
+            self.visit(current_statement)
+
+            # Move to next location which may have been altered by the statement we just executed.
+            self._state.execution_location = self._state.next_execution_location
+
+        # We're about to end. Make sure we don't have any dangling loops, etc.
+        if len(self._state.block_states) > 0:
+            raise BasicMistakeError("Missing block close", tree=current_statement)
 
     def end_statement(self, tree: Tree):
         self._state.next_execution_location = None
@@ -397,6 +408,22 @@ class _ParseTreeInterpreter(LarkInterpreter):
             self._execute_inline_statements(then_block.children)
         elif else_block is not None:
             self._execute_inline_statements(else_block.children)
+
+    def _jump(self, location: _ExecutionLocation):
+        self._state.next_execution_location = location
+
+    def if_statement(self, tree: Tree):
+        condition_expr = tree.children[1]
+        condition_value = self.evaluate_expression(condition_expr)
+        if not _is_numeric_basic_value(condition_value):
+            raise BasicMistakeError("IF conditions must be numeric", tree=condition_expr)
+
+        if condition_value == 0:
+            self._jump(self._state.program_analysis.if_jump_targets[tree])
+
+    def else_statement(self, tree: Tree):
+        # Skip this statement. If we're executing it, we fell through from the THEN body.
+        self._jump(self._state.program_analysis.else_jump_targets[tree])
 
     def inline_for_statement(self, tree: Tree):
         loop_defn = tree.children[0]
@@ -455,6 +482,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._set_variable(tree, var_name, from_value)
 
         # TODO: do we care about repeated variable names?
+        assert self._state.next_execution_location is not None
         self._state.block_states.append(
             _BlockState(
                 block_type=_BlockType.FOR_LOOP,
@@ -507,7 +535,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
         if should_loop:
             self._set_variable(tree, block_state.variable_name, next_index)
-            self._state.next_execution_location = block_state.body_start_location
+            self._jump(block_state.body_start_location)
         else:
             self._state.block_states.pop()
 
@@ -656,3 +684,68 @@ class _ExpressionTransformer(Transformer):
             return self._state.variables[variable_name]
         except KeyError:
             raise BasicMistakeError(f"No such variable: {variable_name}", tree=tree)
+
+
+@v_args(tree=True)
+class _ProgramAnalysisVisitor(Visitor):
+    @dataclasses.dataclass
+    class _IfState:
+        if_statement: Tree
+        else_statement: typing.Optional[Tree] = None
+        else_location: typing.Optional[_ExecutionLocation] = None
+
+    analysis: _ProgramAnalysis
+
+    _if_statement_stack: list[_IfState]
+    _current_location: _ExecutionLocation
+
+    def __init__(self):
+        self.analysis = _ProgramAnalysis()
+        self._reset()
+
+    def _reset(self):
+        self._if_statement_stack = []
+        self._current_location = _ExecutionLocation(statement_index=0, line_index=0)
+
+    def analyse_lines(self, lines: typing.Sequence[_NumberedLine]):
+        self._reset()
+        for line_index, line in enumerate(lines):
+            for statement_index, statement in enumerate(line.statements):
+                self._current_location = _ExecutionLocation(
+                    statement_index=statement_index, line_index=line_index
+                )
+                self.visit(statement)
+
+        if len(self._if_statement_stack) > 0:
+            raise BasicBadProgramError(
+                "Unclosed IF", tree=self._if_statement_stack[-1].if_statement
+            )
+
+    def if_statement(self, tree: Tree):
+        self._if_statement_stack.append(_ProgramAnalysisVisitor._IfState(if_statement=tree))
+
+    def else_statement(self, tree: Tree):
+        if len(self._if_statement_stack) == 0:
+            raise BasicBadProgramError("ELSE without matching IF", tree=tree)
+        if_state = self._if_statement_stack[-1]
+        if if_state.else_statement is not None:
+            raise BasicBadProgramError("Multiple ELSE within single IF", tree=tree)
+        if_state.else_statement = tree
+
+        # We jump to the statement following the else location.
+        if_state.else_location = _ExecutionLocation(
+            line_index=self._current_location.line_index,
+            statement_index=self._current_location.statement_index + 1,
+        )
+
+    def endif_statement(self, tree: Tree):
+        try:
+            if_state = self._if_statement_stack.pop()
+        except IndexError:
+            raise BasicBadProgramError("ENDIF without matching IF", tree=tree)
+        if if_state.else_statement is not None:
+            assert if_state.else_location is not None
+            self.analysis.else_jump_targets[if_state.else_statement] = self._current_location
+            self.analysis.if_jump_targets[if_state.if_statement] = if_state.else_location
+        else:
+            self.analysis.if_jump_targets[if_state.if_statement] = self._current_location
