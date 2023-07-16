@@ -85,18 +85,21 @@ class _ParseTreeInterpreter(LarkInterpreter):
     _state: _InterpreterState
     _expression_transformer: ExpressionTransformer
 
-    def __init__(self, state: _InterpreterState):
+    def __init__(self):
         super().__init__()
-        self._state = state
+        self._state = _InterpreterState()
         self._expression_transformer = ExpressionTransformer(
             variable_fetcher=lambda v: self._state.variables[v]
         )
 
-    def evaluate_expression(self, expression: Tree) -> BasicValue:
+    def evaluate_expression(self, expression: str) -> BasicValue:
         """
-        Evaluate an expression from its AST node based on the current interpreter state.
+        Evaluate an expression.
 
         """
+        return self._evaluate_expression_tree(self._parse(expression, start="expression"))
+
+    def _evaluate_expression_tree(self, expression: Tree) -> BasicValue:
         try:
             value = self._expression_transformer.transform(expression)
         except VisitError as e:
@@ -104,8 +107,23 @@ class _ParseTreeInterpreter(LarkInterpreter):
         assert is_basic_value(value)
         return value
 
+    def execute_prompt_line(self, prompt_line: str):
+        self.visit(self._parse(prompt_line, start="promptline"))
+
+    def load_program(self, program_source: str):
+        self.execute_prompt_line("NEW")
+        self.visit(self._parse(program_source, start="program"))
+
     def _write_output(self, text: str):
         sys.stdout.write(text)
+
+    def _parse(self, input_text: str, **kwargs) -> Tree:
+        try:
+            tree = _load_parser().parse(input_text, **kwargs)
+        except UnexpectedInput as lark_exception:
+            raise BasicSyntaxError(str(lark_exception)) from lark_exception
+        self._state.source = input_text
+        return tree
 
     def _execute_inline_statements(self, statements: list[Tree]):
         """
@@ -285,7 +303,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
     def _test_if_condition(self, if_header: Tree) -> bool:
         condition_expr = if_header.children[1]
-        condition_value = self.evaluate_expression(condition_expr)
+        condition_value = self._evaluate_expression_tree(condition_expr)
         if not is_numeric_basic_value(condition_value):
             raise BasicMistakeError("IF conditions must be numeric", tree=condition_expr)
         return condition_value != 0
@@ -327,7 +345,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def _begin_for(self, for_statement: Tree):
         # TODO: do we care about repeated variable names?
         var_name, from_expr, _, _ = self._unpack_for_statement(for_statement)
-        from_value = self.evaluate_expression(from_expr)
+        from_value = self._evaluate_expression_tree(from_expr)
         if not is_numeric_basic_value(from_value):
             raise BasicMistakeError("FOR start value must be numeric", tree=for_statement)
         self._set_variable(for_statement, var_name, from_value)
@@ -340,12 +358,12 @@ class _ParseTreeInterpreter(LarkInterpreter):
                     f"Unexpected NEXT variable: {next_statement.children[1]}", tree=next_statement
                 )
 
-        to_value = self.evaluate_expression(to_expr)
+        to_value = self._evaluate_expression_tree(to_expr)
         if not is_numeric_basic_value(to_value):
             raise BasicMistakeError("FOR to value must be numeric", tree=to_expr)
 
         if step_expr is not None:
-            step = self.evaluate_expression(step_expr)
+            step = self._evaluate_expression_tree(step_expr)
             if not is_numeric_basic_value(step):
                 raise BasicMistakeError("FOR step value must be numeric", tree=step_expr)
         else:
@@ -382,7 +400,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             else:
                 separator = " "
 
-            value = self.evaluate_expression(item_expression)
+            value = self._evaluate_expression_tree(item_expression)
             self._write_output(f"{value}")
             match separator:
                 case "'":
@@ -403,7 +421,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def let_statement(self, tree: Tree):
         variable_name = tree.children[-3]
         value_expression = tree.children[-1]
-        value = self.evaluate_expression(value_expression)
+        value = self._evaluate_expression_tree(value_expression)
         self._set_variable(tree, variable_name, value)
 
     def end_statement(self, tree: Tree):
@@ -411,32 +429,20 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
 
 class Interpreter:
-    _state: _InterpreterState
     _parse_tree_interpreter: _ParseTreeInterpreter
 
     def __init__(self):
-        self._state = _InterpreterState()
-        self._parse_tree_interpreter = _ParseTreeInterpreter(self._state)
-
-    def _parse(self, input_text: str, **kwargs) -> Tree:
-        try:
-            tree = _load_parser().parse(input_text, **kwargs)
-        except UnexpectedInput as lark_exception:
-            raise BasicSyntaxError(str(lark_exception)) from lark_exception
-        self._state.source = input_text
-        return tree
+        self._parse_tree_interpreter = _ParseTreeInterpreter()
 
     def load_program(self, program: str):
-        self.execute("NEW")
-        self._parse_tree_interpreter.visit(self._parse(program, start="program"))
+        self._parse_tree_interpreter.load_program(program)
 
     def load_and_run_program(self, program: str):
         self.load_program(program)
         self.execute("RUN")
 
     def evaluate(self, expression: str) -> typing.Optional[BasicValue]:
-        tree = self._parse(expression, start="expression")
-        return self._parse_tree_interpreter.evaluate_expression(tree)
+        return self._parse_tree_interpreter.evaluate_expression(expression)
 
     def execute(self, prompt_line: str):
-        self._parse_tree_interpreter.visit(self._parse(prompt_line, start="promptline"))
+        self._parse_tree_interpreter.execute_prompt_line(prompt_line)

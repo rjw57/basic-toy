@@ -44,7 +44,8 @@ def program_lines(interpreter: Interpreter):
     ]
     for line in lines:
         interpreter.execute(line)
-    return interpreter._state.lines
+    # FIXME: preferably expose this more officially?
+    return interpreter._parse_tree_interpreter._state.lines
 
 
 def test_line_count(program_lines):
