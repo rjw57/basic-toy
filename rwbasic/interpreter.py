@@ -1,17 +1,17 @@
 import dataclasses
-import enum
 import itertools
 import sys
 import typing
 from functools import cache
 
-from lark import Lark, Token, Transformer, Tree, Visitor
+from lark import Lark, Token, Transformer, Tree
 from lark.exceptions import UnexpectedInput, VisitError
 from lark.visitors import Interpreter as LarkInterpreter
 from lark.visitors import v_args
 from numpy import int32, uint32
 from sortedcontainers import SortedKeyList
 
+from ._analysis import ExecutionLocation, ProgramAnalysis, ProgramAnalysisVisitor
 from .exceptions import (
     BasicBadProgramError,
     BasicError,
@@ -49,15 +49,6 @@ class InternalInterpreterError(BasicError):
     pass
 
 
-@dataclasses.dataclass(eq=True, frozen=True)
-class _ExecutionLocation:
-    # Index of statement within execution line.
-    statement_index: int
-
-    # Index of line within the program. None indicates we're executing in the prompt line.
-    line_index: int
-
-
 @dataclasses.dataclass
 class _NumberedLine:
     number: int
@@ -68,25 +59,6 @@ class _NumberedLine:
 class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
     def __init__(self, iterable=None):
         super().__init__(iterable=iterable, key=lambda nl: nl.number)
-
-
-@dataclasses.dataclass
-class _ProgramAnalysis:
-    # Mapping from IF statement locations to locations to jump to if condition *NOT* met.
-    if_jump_targets: dict[_ExecutionLocation, _ExecutionLocation] = dataclasses.field(
-        default_factory=dict
-    )
-
-    # Mapping from ELSE statement locations to location to jump to if we want to skip it.
-    else_jump_targets: dict[_ExecutionLocation, _ExecutionLocation] = dataclasses.field(
-        default_factory=dict
-    )
-
-    # Mapping from loop block end statement locations to defining statements and body start
-    # locations.
-    loop_definitions_and_bodies: dict[
-        _ExecutionLocation, tuple[Tree, _ExecutionLocation]
-    ] = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -101,13 +73,13 @@ class _InterpreterState:
     lines: _SortedNumberedLineList = dataclasses.field(default_factory=_SortedNumberedLineList)
 
     # Current execution location or None if we're not executing at the moment.
-    execution_location: typing.Optional[_ExecutionLocation] = None
+    execution_location: typing.Optional[ExecutionLocation] = None
 
     # Execution location for next statement or None if we should stop execution.
-    next_execution_location: typing.Optional[_ExecutionLocation] = None
+    next_execution_location: typing.Optional[ExecutionLocation] = None
 
     # Analysis of the current program.
-    program_analysis: _ProgramAnalysis = dataclasses.field(default_factory=_ProgramAnalysis)
+    program_analysis: ProgramAnalysis = dataclasses.field(default_factory=ProgramAnalysis)
 
     def reset(self):
         """Reset state to defaults."""
@@ -115,7 +87,7 @@ class _InterpreterState:
         self.lines = _SortedNumberedLineList()
         self.execution_location = None
         self.next_execution_location = None
-        self.program_analysis = _ProgramAnalysis()
+        self.program_analysis = ProgramAnalysis()
 
 
 @v_args(tree=True)
@@ -286,7 +258,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         for statement in statements:
             self.visit(statement)
 
-    def _jump(self, location: _ExecutionLocation):
+    def _jump(self, location: ExecutionLocation):
         """
         When RUN-ing a program, jump to a new location.
 
@@ -385,11 +357,11 @@ class _ParseTreeInterpreter(LarkInterpreter):
             return
 
         # Start at first line
-        self._state.execution_location = _ExecutionLocation(line_index=0, statement_index=0)
+        self._state.execution_location = ExecutionLocation(line_index=0, statement_index=0)
 
         # Analyse program loops, etc.
-        analysis_visitor = _ProgramAnalysisVisitor()
-        analysis_visitor.analyse_lines(self._state.lines)
+        analysis_visitor = ProgramAnalysisVisitor()
+        analysis_visitor.analyse_lines(line.statements for line in self._state.lines)
         self._state.program_analysis = analysis_visitor.analysis
 
         # Keep going until we run out of program or the END statement sets the next location to
@@ -409,13 +381,13 @@ class _ParseTreeInterpreter(LarkInterpreter):
                 ]
             except IndexError:
                 # We fell off the line, move to next line and loop.
-                self._state.execution_location = _ExecutionLocation(
+                self._state.execution_location = ExecutionLocation(
                     line_index=self._state.execution_location.line_index + 1, statement_index=0
                 )
                 continue
 
             # Prepare the expected next location to be the following statement.
-            self._state.next_execution_location = _ExecutionLocation(
+            self._state.next_execution_location = ExecutionLocation(
                 line_index=self._state.execution_location.line_index,
                 statement_index=self._state.execution_location.statement_index + 1,
             )
@@ -578,150 +550,6 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
     def end_statement(self, tree: Tree):
         self._state.next_execution_location = None
-
-
-@v_args(tree=True)
-class _ProgramAnalysisVisitor(Visitor):
-    class _ControlFlowBlockType(enum.Enum):
-        IF_THEN = enum.auto()
-        FOR_NEXT = enum.auto()
-
-    @dataclasses.dataclass
-    class _ControlFlowBlockState:
-        # What sort of control flow block is this?
-        block_type: "_ProgramAnalysisVisitor._ControlFlowBlockType"
-
-        # The statement which initiated the block, (IF, FOR, etc.) and its location
-        definition_statement: Tree
-        definition_location: _ExecutionLocation
-
-        # The location of the start of the block content.
-        entry_location: typing.Optional[_ExecutionLocation] = None
-
-        # The location to jump to to exit the block.
-        exit_location: typing.Optional[_ExecutionLocation] = None
-
-        # For if-then blocks only, the location of the start of the ELSE block and the ELSE
-        # statement itself.
-        else_statement: typing.Optional[Tree] = None
-        else_location: typing.Optional[_ExecutionLocation] = None
-        else_entry_location: typing.Optional[_ExecutionLocation] = None
-
-    analysis: _ProgramAnalysis
-
-    _control_flow_block_stack: list[_ControlFlowBlockState]
-    _current_location: _ExecutionLocation
-
-    def __init__(self):
-        self._reset()
-
-    def _reset(self):
-        self.analysis = _ProgramAnalysis()
-        self._control_flow_block_stack = []
-        self._current_location = _ExecutionLocation(statement_index=0, line_index=0)
-
-    def analyse_lines(self, lines: typing.Sequence[_NumberedLine]):
-        self._reset()
-        for line_index, line in enumerate(lines):
-            for statement_index, statement in enumerate(line.statements):
-                self._current_location = _ExecutionLocation(
-                    statement_index=statement_index, line_index=line_index
-                )
-                self.visit(statement)
-
-        if len(self._control_flow_block_stack) > 0:
-            raise BasicBadProgramError(
-                "Unclosed control flow block",
-                tree=self._control_flow_block_stack[-1].definition_statement,
-            )
-
-    def _location_following_current(self) -> _ExecutionLocation:
-        "Helper to return a location pointing to the next statement."
-        return _ExecutionLocation(
-            line_index=self._current_location.line_index,
-            statement_index=self._current_location.statement_index + 1,
-        )
-
-    def for_statement(self, tree: Tree):
-        self._control_flow_block_stack.append(
-            _ProgramAnalysisVisitor._ControlFlowBlockState(
-                block_type=_ProgramAnalysisVisitor._ControlFlowBlockType.FOR_NEXT,
-                definition_statement=tree,
-                definition_location=self._current_location,
-                entry_location=self._location_following_current(),
-            )
-        )
-
-    def next_statement(self, tree: Tree):
-        try:
-            block_state = self._control_flow_block_stack.pop()
-        except IndexError:
-            raise BasicBadProgramError("NEXT without matching FOR", tree=tree)
-
-        if block_state.block_type != _ProgramAnalysisVisitor._ControlFlowBlockType.FOR_NEXT:
-            raise BasicBadProgramError("NEXT within unclosed non-FOR block", tree=tree)
-
-        index_var_name = block_state.definition_statement.children[1]
-        if len(tree.children) > 1:
-            if tree.children[1] != index_var_name:
-                raise BasicBadProgramError(
-                    f"Unexpected NEXT variable name: {tree.children[1]}", tree=tree
-                )
-
-        assert block_state.entry_location is not None
-        self.analysis.loop_definitions_and_bodies[self._current_location] = (
-            block_state.definition_statement,
-            block_state.entry_location,
-        )
-
-    def if_statement(self, tree: Tree):
-        self._control_flow_block_stack.append(
-            _ProgramAnalysisVisitor._ControlFlowBlockState(
-                block_type=_ProgramAnalysisVisitor._ControlFlowBlockType.IF_THEN,
-                definition_statement=tree,
-                definition_location=self._current_location,
-                entry_location=self._location_following_current(),
-            )
-        )
-
-    def else_statement(self, tree: Tree):
-        if len(self._control_flow_block_stack) == 0:
-            raise BasicBadProgramError("ELSE without matching IF", tree=tree)
-
-        block_state = self._control_flow_block_stack[-1]
-        if block_state.else_statement is not None:
-            raise BasicBadProgramError("Multiple ELSE within single IF", tree=tree)
-
-        if block_state.block_type != _ProgramAnalysisVisitor._ControlFlowBlockType.IF_THEN:
-            raise BasicBadProgramError("ELSE within unclosed non-IF block", tree=tree)
-
-        # Record the else statement. We jump to the statement following the else location.
-        block_state.else_statement = tree
-        block_state.else_location = self._current_location
-        block_state.else_entry_location = self._location_following_current()
-
-    def endif_statement(self, tree: Tree):
-        try:
-            block_state = self._control_flow_block_stack.pop()
-        except IndexError:
-            raise BasicBadProgramError("ENDIF without matching IF", tree=tree)
-
-        if block_state.block_type != _ProgramAnalysisVisitor._ControlFlowBlockType.IF_THEN:
-            raise BasicBadProgramError("ENDIF within unclosed non-IF block", tree=tree)
-
-        if block_state.else_statement is not None:
-            assert block_state.else_location is not None
-            assert block_state.else_entry_location is not None
-            self.analysis.else_jump_targets[
-                block_state.else_location
-            ] = self._location_following_current()
-            self.analysis.if_jump_targets[
-                block_state.definition_location
-            ] = block_state.else_entry_location
-        else:
-            self.analysis.if_jump_targets[
-                block_state.definition_location
-            ] = self._location_following_current()
 
 
 class Interpreter:
