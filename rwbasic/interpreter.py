@@ -12,6 +12,15 @@ from lark.visitors import v_args
 from numpy import int32, uint32
 from sortedcontainers import SortedKeyList
 
+from .exceptions import (
+    BasicBadProgramError,
+    BasicError,
+    BasicMistakeError,
+    BasicSyntaxError,
+)
+
+__all__ = ["Interpreter", "BasicValue"]
+
 BasicValue = typing.Union[int32, float, str]
 
 
@@ -22,7 +31,6 @@ def load_parser() -> Lark:
         "grammar.lark",
         propagate_positions=True,
         parser="lalr",
-        lexer="basic",
         cache=True,
         start=["program", "promptline", "expression"],
     )
@@ -30,31 +38,6 @@ def load_parser() -> Lark:
 
 # Binary operators which understand string types
 _STRING_BINARY_OPS = {"+", "=", "<>", "<", ">", "<=", ">="}
-
-
-class BasicError(RuntimeError):
-    def __init__(self, message: str, *, tree: typing.Optional[Tree] = None):
-        super().__init__(message)
-        self._tree = tree
-
-
-class BasicSyntaxError(BasicError):
-    """
-    Raised when there is a syntax error. The __cause__ attribute will be the underlying lark
-    parser exception.
-    """
-
-
-class BasicMistakeError(BasicError):
-    """
-    Raised when there was some runtime mistake.
-    """
-
-
-class BasicBadProgramError(BasicError):
-    """
-    Raised when the program itself is wrongly specified.
-    """
 
 
 class InternalParserError(BasicError):

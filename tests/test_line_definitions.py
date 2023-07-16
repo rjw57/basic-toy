@@ -2,7 +2,8 @@ import textwrap
 
 import pytest
 
-from rwbasic.interpreter import BasicBadProgramError, BasicSyntaxError, Interpreter
+from rwbasic.exceptions import BasicBadProgramError, BasicSyntaxError
+from rwbasic.interpreter import Interpreter
 
 
 @pytest.mark.parametrize(

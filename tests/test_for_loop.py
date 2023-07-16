@@ -1,11 +1,7 @@
 import pytest
 
-from rwbasic.interpreter import (
-    BasicBadProgramError,
-    BasicMistakeError,
-    BasicSyntaxError,
-    Interpreter,
-)
+from rwbasic.exceptions import BasicBadProgramError, BasicMistakeError, BasicSyntaxError
+from rwbasic.interpreter import Interpreter
 
 
 @pytest.mark.parametrize(

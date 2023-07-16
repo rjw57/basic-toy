@@ -1,6 +1,7 @@
 import pytest
 
-from rwbasic.interpreter import BasicMistakeError, Interpreter
+from rwbasic.exceptions import BasicMistakeError
+from rwbasic.interpreter import Interpreter
 
 
 @pytest.mark.parametrize(
