@@ -36,37 +36,41 @@ class ProgramAnalysis:
     ] = dataclasses.field(default_factory=dict)
 
 
+class _ControlFlowType(enum.Enum):
+    IF_THEN = enum.auto()
+    FOR_NEXT = enum.auto()
+    REPEAT_UNTIL = enum.auto()
+
+
+@dataclasses.dataclass
+class _Block:
+    """
+    Control flow statements define one or more blocks. Loop statements define one block: the
+    loop body. IF... THEN.. statements define the THEN block and, optionally, an ELSE block.
+    """
+
+    # The statement which defined this block and its location
+    definition_statement: Tree
+    definition_location: ExecutionLocation
+
+    # The location of the entry point for this block
+    entry_location: ExecutionLocation
+
+
+@dataclasses.dataclass
+class _ControlFlowState:
+    # What sort of control flow is this?
+    flow_type: _ControlFlowType
+
+    # Blocks making up this control flow statement
+    blocks: list[_Block] = dataclasses.field(default_factory=list)
+
+
 @v_args(tree=True)
 class ProgramAnalysisVisitor(Visitor):
-    class _ControlFlowBlockType(enum.Enum):
-        IF_THEN = enum.auto()
-        FOR_NEXT = enum.auto()
-        REPEAT_UNTIL = enum.auto()
-
-    @dataclasses.dataclass
-    class _ControlFlowBlockState:
-        # What sort of control flow block is this?
-        block_type: "ProgramAnalysisVisitor._ControlFlowBlockType"
-
-        # The statement which initiated the block, (IF, FOR, etc.) and its location
-        definition_statement: Tree
-        definition_location: ExecutionLocation
-
-        # The location of the start of the block content.
-        entry_location: typing.Optional[ExecutionLocation] = None
-
-        # The location to jump to to exit the block.
-        exit_location: typing.Optional[ExecutionLocation] = None
-
-        # For if-then blocks only, the location of the start of the ELSE block and the ELSE
-        # statement itself.
-        else_statement: typing.Optional[Tree] = None
-        else_location: typing.Optional[ExecutionLocation] = None
-        else_entry_location: typing.Optional[ExecutionLocation] = None
-
     analysis: ProgramAnalysis
 
-    _control_flow_block_stack: list[_ControlFlowBlockState]
+    _control_flow_stack: list[_ControlFlowState]
     _current_location: ExecutionLocation
 
     def __init__(self):
@@ -74,7 +78,7 @@ class ProgramAnalysisVisitor(Visitor):
 
     def _reset(self):
         self.analysis = ProgramAnalysis()
-        self._control_flow_block_stack = []
+        self._control_flow_stack = []
         self._current_location = ExecutionLocation(statement_index=0, line_index=0)
 
     def analyse_lines(self, lines: typing.Iterable[typing.Iterable[Tree]]):
@@ -86,10 +90,10 @@ class ProgramAnalysisVisitor(Visitor):
                 )
                 self.visit(statement)
 
-        if len(self._control_flow_block_stack) > 0:
+        if len(self._control_flow_stack) > 0:
             raise BasicBadProgramError(
-                "Unclosed control flow block",
-                tree=self._control_flow_block_stack[-1].definition_statement,
+                "Unclosed control flow statement",
+                tree=self._control_flow_stack[-1].blocks[0].definition_statement,
             )
 
     def _location_following_current(self) -> ExecutionLocation:
@@ -99,108 +103,109 @@ class ProgramAnalysisVisitor(Visitor):
             statement_index=self._current_location.statement_index + 1,
         )
 
-    def for_statement(self, tree: Tree):
-        self._control_flow_block_stack.append(
-            ProgramAnalysisVisitor._ControlFlowBlockState(
-                block_type=ProgramAnalysisVisitor._ControlFlowBlockType.FOR_NEXT,
-                definition_statement=tree,
-                definition_location=self._current_location,
-                entry_location=self._location_following_current(),
+    def _push_new_flow(self, initial_statement: Tree, flow_type: _ControlFlowType):
+        self._control_flow_stack.append(
+            _ControlFlowState(
+                flow_type=flow_type,
+                blocks=[
+                    _Block(
+                        definition_statement=initial_statement,
+                        definition_location=self._current_location,
+                        entry_location=self._location_following_current(),
+                    )
+                ],
             )
         )
 
-    def next_statement(self, tree: Tree):
+    def _peek_flow(self, end_statement: Tree, flow_type: _ControlFlowType):
         try:
-            block_state = self._control_flow_block_stack.pop()
+            flow = self._control_flow_stack[-1]
         except IndexError:
-            raise BasicBadProgramError("NEXT without matching FOR", tree=tree)
+            raise BasicBadProgramError(
+                "Closing control flow statement outside of control flow", tree=end_statement
+            )
 
-        if block_state.block_type != ProgramAnalysisVisitor._ControlFlowBlockType.FOR_NEXT:
-            raise BasicBadProgramError("NEXT within unclosed non-FOR block", tree=tree)
+        if flow.flow_type != flow_type:
+            raise BasicBadProgramError(
+                "Incorrect control flow closing statement for open block", tree=end_statement
+            )
 
-        index_var_name = block_state.definition_statement.children[1]
+        return flow
+
+    def _pop_flow(self, end_statement: Tree, flow_type: _ControlFlowType):
+        flow = self._peek_flow(end_statement, flow_type)
+        self._control_flow_stack.pop()
+        return flow
+
+    def for_statement(self, tree: Tree):
+        self._push_new_flow(tree, _ControlFlowType.FOR_NEXT)
+
+    def next_statement(self, tree: Tree):
+        flow = self._pop_flow(tree, _ControlFlowType.FOR_NEXT)
+
+        assert len(flow.blocks) == 1
+        for_block = flow.blocks[0]
+
+        index_var_name = for_block.definition_statement.children[1]
         if len(tree.children) > 1:
             if tree.children[1] != index_var_name:
                 raise BasicBadProgramError(
                     f"Unexpected NEXT variable name: {tree.children[1]}", tree=tree
                 )
 
-        assert block_state.entry_location is not None
         self.analysis.loop_definitions_and_bodies[self._current_location] = (
-            block_state.definition_statement,
-            block_state.entry_location,
+            for_block.definition_statement,
+            for_block.entry_location,
         )
 
     def repeat_statement(self, tree: Tree):
-        self._control_flow_block_stack.append(
-            ProgramAnalysisVisitor._ControlFlowBlockState(
-                block_type=ProgramAnalysisVisitor._ControlFlowBlockType.REPEAT_UNTIL,
-                definition_statement=tree,
-                definition_location=self._current_location,
-                entry_location=self._location_following_current(),
-            )
-        )
+        self._push_new_flow(tree, _ControlFlowType.REPEAT_UNTIL)
 
     def until_statement(self, tree: Tree):
-        try:
-            block_state = self._control_flow_block_stack.pop()
-        except IndexError:
-            raise BasicBadProgramError("UNTIL without matching REPEAT", tree=tree)
+        flow = self._pop_flow(tree, _ControlFlowType.REPEAT_UNTIL)
 
-        if block_state.block_type != ProgramAnalysisVisitor._ControlFlowBlockType.REPEAT_UNTIL:
-            raise BasicBadProgramError("UNTIL within unclosed non-REPEAT block", tree=tree)
+        assert len(flow.blocks) == 1
+        repeat_block = flow.blocks[0]
 
-        assert block_state.entry_location is not None
         self.analysis.loop_definitions_and_bodies[self._current_location] = (
-            block_state.definition_statement,
-            block_state.entry_location,
+            repeat_block.definition_statement,
+            repeat_block.entry_location,
         )
 
     def if_statement(self, tree: Tree):
-        self._control_flow_block_stack.append(
-            ProgramAnalysisVisitor._ControlFlowBlockState(
-                block_type=ProgramAnalysisVisitor._ControlFlowBlockType.IF_THEN,
+        self._push_new_flow(tree, _ControlFlowType.IF_THEN)
+
+    def else_statement(self, tree: Tree):
+        flow = self._peek_flow(tree, _ControlFlowType.IF_THEN)
+
+        if len(flow.blocks) > 1:
+            raise BasicBadProgramError("Multiple ELSE within single IF", tree=tree)
+
+        flow.blocks.append(
+            _Block(
                 definition_statement=tree,
                 definition_location=self._current_location,
                 entry_location=self._location_following_current(),
             )
         )
 
-    def else_statement(self, tree: Tree):
-        if len(self._control_flow_block_stack) == 0:
-            raise BasicBadProgramError("ELSE without matching IF", tree=tree)
-
-        block_state = self._control_flow_block_stack[-1]
-        if block_state.else_statement is not None:
-            raise BasicBadProgramError("Multiple ELSE within single IF", tree=tree)
-
-        if block_state.block_type != ProgramAnalysisVisitor._ControlFlowBlockType.IF_THEN:
-            raise BasicBadProgramError("ELSE within unclosed non-IF block", tree=tree)
-
-        # Record the else statement. We jump to the statement following the else location.
-        block_state.else_statement = tree
-        block_state.else_location = self._current_location
-        block_state.else_entry_location = self._location_following_current()
-
     def endif_statement(self, tree: Tree):
+        flow = self._pop_flow(tree, _ControlFlowType.IF_THEN)
+
+        assert len(flow.blocks) >= 1 and len(flow.blocks) <= 2
+
+        if_block = flow.blocks[0]
         try:
-            block_state = self._control_flow_block_stack.pop()
+            else_block = flow.blocks[1]
         except IndexError:
-            raise BasicBadProgramError("ENDIF without matching IF", tree=tree)
+            else_block = None
 
-        if block_state.block_type != ProgramAnalysisVisitor._ControlFlowBlockType.IF_THEN:
-            raise BasicBadProgramError("ENDIF within unclosed non-IF block", tree=tree)
-
-        if block_state.else_statement is not None:
-            assert block_state.else_location is not None
-            assert block_state.else_entry_location is not None
+        if else_block is not None:
             self.analysis.else_jump_targets[
-                block_state.else_location
+                else_block.definition_location
             ] = self._location_following_current()
-            self.analysis.if_jump_targets[
-                block_state.definition_location
-            ] = block_state.else_entry_location
+            self.analysis.if_jump_targets[if_block.definition_location] = else_block.entry_location
         else:
             self.analysis.if_jump_targets[
-                block_state.definition_location
+                if_block.definition_location
             ] = self._location_following_current()
