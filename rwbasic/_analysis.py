@@ -41,9 +41,9 @@ class ProgramAnalysis:
         default_factory=dict
     )
 
-    # For while loops, map the location of the WEND statement to the location of the WHILE
+    # For while loops, map the location of the ENDWHILE statement to the location of the WHILE
     # statement.
-    wend_while_locations: dict[ExecutionLocation, ExecutionLocation] = dataclasses.field(
+    endwhile_while_locations: dict[ExecutionLocation, ExecutionLocation] = dataclasses.field(
         default_factory=dict
     )
 
@@ -70,7 +70,7 @@ class _ControlFlowType(enum.Enum):
     IF_THEN = enum.auto()
     FOR_NEXT = enum.auto()
     REPEAT_UNTIL = enum.auto()
-    WHILE_WEND = enum.auto()
+    WHILE_ENDWHILE = enum.auto()
     CASE_OF = enum.auto()
 
 
@@ -205,20 +205,20 @@ class ProgramAnalysisVisitor(Visitor):
         )
 
     def while_statement(self, tree: Tree):
-        self._push_new_flow(tree, _ControlFlowType.WHILE_WEND)
+        self._push_new_flow(tree, _ControlFlowType.WHILE_ENDWHILE)
 
-    def wend_statement(self, tree: Tree):
-        flow = self._pop_flow(tree, _ControlFlowType.WHILE_WEND)
+    def endwhile_statement(self, tree: Tree):
+        flow = self._pop_flow(tree, _ControlFlowType.WHILE_ENDWHILE)
 
         assert len(flow.blocks) == 1
         while_block = flow.blocks[0]
 
-        # WHILE statements are odd in that we want to know both where WEND should jump to to
+        # WHILE statements are odd in that we want to know both where ENDWHILE should jump to to
         # re-evaluate the condition and where WHILE should jump to to exit the loop.
         self.analysis.while_exit_locations[
             while_block.definition_location
         ] = self._location_following_current()
-        self.analysis.wend_while_locations[
+        self.analysis.endwhile_while_locations[
             self._current_location
         ] = while_block.definition_location
 

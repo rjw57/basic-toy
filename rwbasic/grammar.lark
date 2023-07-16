@@ -41,6 +41,7 @@ ELSE: "ELSE"i
 END: "END"i
 ENDCASE: "ENDCASE"i
 ENDIF: "ENDIF"i
+ENDWHILE: "ENDWHILE"i
 EOR: "EOR"i
 FOR: "FOR"i
 IF: "IF"i
@@ -61,7 +62,6 @@ STEP: "STEP"i
 THEN: "THEN"i
 TO: "TO"i
 UNTIL: "UNTIL"i
-WEND: "WEND"i
 WHEN: "WHEN"i
 WHILE: "WHILE"i
 
@@ -94,7 +94,7 @@ line_definition_statements: (line_definition_initial_statement ":")? \
                           | repeat_statement
                           | until_statement
                           | while_statement
-                          | wend_statement
+                          | endwhile_statement
 
 // Statements which can appear in line definitions but only at the start
 ?line_definition_initial_statement: else_statement
@@ -146,7 +146,7 @@ endif_statement: ENDIF
 repeat_statement: REPEAT
 until_statement: UNTIL expression
 while_statement: WHILE expression
-wend_statement: WEND
+endwhile_statement: ENDWHILE
 case_statement: CASE expression OF
 when_statement: WHEN (expression ",")* expression
 endcase_statement: ENDCASE
@@ -155,7 +155,7 @@ otherwise_statement: OTHERWISE
 // Inline loops, can appear in prompt lines or programs but covers only one line.
 inline_for_statement: for_statement ":" (statement ":")* next_statement
 inline_repeat_statement: repeat_statement ":" (statement ":")* until_statement
-inline_while_statement: while_statement ":" (statement ":")* wend_statement
+inline_while_statement: while_statement ":" (statement ":")* endwhile_statement
 
 // Inline IF statement, can appear in prompt lines or programs but covers only one line.
 inline_if_statement: inline_if_header inline_statement_block (ELSE inline_statement_block)?
