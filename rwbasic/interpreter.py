@@ -384,7 +384,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             self._state.source[line_statements.meta.start_pos : line_statements.meta.end_pos + 1]
             if len(line_statements.children) > 0
             else ""
-        )
+        ).rstrip()
 
         # We store the individual statement trees as the line content. We replace any existing
         # lines with the same line number.
@@ -397,7 +397,10 @@ class _ParseTreeInterpreter(LarkInterpreter):
             and self._state.lines[insert_index].number == line_number
         ):
             del self._state.lines[insert_index]
-        self._state.lines.add(new_line)
+
+        # Don't add blank lines. This lets one "delete" lines by adding black ones in.
+        if line_source != "":
+            self._state.lines.add(new_line)
 
     # Prompt line statements
 

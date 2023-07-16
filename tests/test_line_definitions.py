@@ -37,7 +37,9 @@ def program_lines(interpreter: Interpreter):
         "20 REM replace the line",
         "15 PRINT 1:PRINT 2:REM comment to eol",
         "30 PRINT 1:PRINT 2:REM comment to eol ignores next PRINT:PRINT 4",
+        "50 REM some line",
         "100 PRINT 3",
+        "50",  # deletes line 50
     ]
     for line in lines:
         interpreter.execute(line)

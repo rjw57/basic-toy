@@ -16,7 +16,7 @@ def test_main(mocker):
     repl_mock = mocker.patch("rwbasic.tool.ReplSession")
     mocker.patch("sys.argv", ["rwbasic"])
     main()
-    repl_mock.return_value.run.assert_called()
+    repl_mock.return_value.start_interactive.assert_called()
 
 
 @pytest.mark.filterwarnings("ignore:invalid escape sequence:DeprecationWarning")

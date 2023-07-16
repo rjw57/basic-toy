@@ -28,7 +28,14 @@ class ReplSession:
         self._prompt_session = prompt_session if prompt_session is not None else PromptSession()
         self._interpreter = Interpreter()
 
+    def load_program_from_file(self, program_path: str):
+        with open(program_path) as f:
+            self._interpreter.load_program(f.read())
+
     def run(self):
+        self._interpreter.execute("RUN")
+
+    def start_interactive(self):
         # TODO: let style by configurable
         style = style_from_pygments_cls(get_style_by_name("solarized-dark"))
         while True:
