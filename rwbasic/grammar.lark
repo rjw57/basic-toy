@@ -57,15 +57,14 @@ STEP: "STEP"i
 THEN: "THEN"i
 TO: "TO"i
 
-// Comment. Will match to end of line including any ":" characters.
-COMMENT: REM /.*/
+COMMENT: /REM[^\n]*/i
+SHEBANG_LINE: /#![^\n]*/
 
 // Print formatting
 PRINT_ITEM_SEPARATOR: SEMICOLON | COMMA | APOSTROPHE
 
 // A program definition
-program: shebang_line? (program_line NEWLINE)* program_line
-shebang_line: /#!.*/ NEWLINE
+program: (SHEBANG_LINE NEWLINE)? (program_line NEWLINE)* program_line
 ?program_line: numbered_line_definition | unnumbered_line_definition
 unnumbered_line_definition: line_definition_statements
 numbered_line_definition: DECIMAL_LITERAL line_definition_statements
@@ -74,7 +73,7 @@ numbered_line_definition: DECIMAL_LITERAL line_definition_statements
 ?promptline: numbered_line_update
            | prompt_line_statements
 numbered_line_update: DECIMAL_LITERAL line_definition_statements
-prompt_line_statements: (prompt_line_statement ":")* prompt_line_statement?
+prompt_line_statements: (prompt_line_statement ":")* (prompt_line_statement | comment_statement)?
 
 line_definition_statements: (line_definition_initial_statement ":")? \
                                 (line_definition_statement ":")* \
@@ -93,6 +92,7 @@ line_definition_statements: (line_definition_initial_statement ":")? \
 
 // Statements which can appear in line definitions but only at the end
 ?line_definition_final_statement: if_statement
+                                | comment_statement
 
 // Statements which can appear in the prompt line.
 ?prompt_line_statement: statement
@@ -102,8 +102,7 @@ line_definition_statements: (line_definition_initial_statement ":")? \
                       | renumber_statement
 
 // Statements within a line which can appear in line definitions or the prompt line.
-?statement: comment_statement
-          | print_statement
+?statement: print_statement
           | let_statement
           | inline_for_statement
           | inline_if_statement
