@@ -380,86 +380,55 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def end_statement(self, tree: Tree):
         self._state.next_execution_location = None
 
-    def _unpack_for_statement(self, for_statement: Tree):
-        var_name = for_statement.children[1]
-        from_expr = for_statement.children[3]
-        to_expr = for_statement.children[5]
-        try:
-            step_expr = for_statement.children[7]
-        except IndexError:
-            step_expr = None
-        return var_name, from_expr, to_expr, step_expr
+    def _jump(self, location: _ExecutionLocation):
+        self._state.next_execution_location = location
+
+    # IF... THEN... ELSE
 
     def inline_if_statement(self, tree: Tree):
-        if_header = tree.children[0]
-        then_block = tree.children[1]
+        if_header, then_block = tree.children[:2]
         try:
             else_block = tree.children[3]
         except IndexError:
             else_block = None
 
-        condition_expr = if_header.children[1]
-        condition_value = self.evaluate_expression(condition_expr)
-
-        if not _is_numeric_basic_value(condition_value):
-            raise BasicMistakeError("IF conditions must be numeric", tree=condition_expr)
-
-        if condition_value != 0:
+        if self._test_if_condition(if_header):
             self._execute_inline_statements(then_block.children)
         elif else_block is not None:
             self._execute_inline_statements(else_block.children)
 
-    def _jump(self, location: _ExecutionLocation):
-        self._state.next_execution_location = location
-
     def if_statement(self, tree: Tree):
-        condition_expr = tree.children[1]
-        condition_value = self.evaluate_expression(condition_expr)
-        if not _is_numeric_basic_value(condition_value):
-            raise BasicMistakeError("IF conditions must be numeric", tree=condition_expr)
-
-        if condition_value == 0:
+        # Skip to ELSE or ENDIF if the condition is not met.
+        if not self._test_if_condition(tree):
             self._jump(self._state.program_analysis.if_jump_targets[tree])
 
     def else_statement(self, tree: Tree):
         # Skip this statement. If we're executing it, we fell through from the THEN body.
         self._jump(self._state.program_analysis.else_jump_targets[tree])
 
+    def _test_if_condition(self, if_header: Tree) -> bool:
+        condition_expr = if_header.children[1]
+        condition_value = self.evaluate_expression(condition_expr)
+        if not _is_numeric_basic_value(condition_value):
+            raise BasicMistakeError("IF conditions must be numeric", tree=condition_expr)
+        return condition_value != 0
+
+    # FOR... NEXT loops
+
     def inline_for_statement(self, tree: Tree):
-        loop_defn = tree.children[0]
-        statements = tree.children[1:-1]
-        matching_next = tree.children[-1]
+        for_statement = tree.children[0]
+        body_statements = tree.children[1:-1]
+        next_statement = tree.children[-1]
 
-        # Extract variable name and loop expressions.
-        var_name, from_expr, to_expr, step_expr = self._unpack_for_statement(loop_defn)
-
-        # Check next variable, if defined, matches the for loop one.
-        if len(matching_next.children) > 1:
-            if matching_next.children[1] != var_name:
-                raise BasicMistakeError("Mismatched NEXT", tree=matching_next)
-
-        # Set loop variable.
-        from_value = self.evaluate_expression(from_expr)
-        if not _is_numeric_basic_value(from_value):
-            raise BasicMistakeError("FOR start value must be numeric", tree=tree)
-        self._set_variable(tree, var_name, from_value)
-
-        # Loop over body.
+        self._begin_for(for_statement)
         while True:
-            self._execute_inline_statements(statements)
-            if not self._process_next(matching_next, loop_defn):
+            self._execute_inline_statements(body_statements)
+            if not self._process_next(next_statement, for_statement):
                 break
 
     def for_statement(self, tree: Tree):
-        # Extract variable name and loop expressions.
-        var_name, from_expr, _, _ = self._unpack_for_statement(tree)
-
-        from_value = self.evaluate_expression(from_expr)
-        if not _is_numeric_basic_value(from_value):
-            raise BasicMistakeError("FOR from value must be numeric", tree=tree)
-        self._set_variable(tree, var_name, from_value)
-
         # TODO: do we care about repeated variable names?
+        self._begin_for(tree)
         assert self._state.next_execution_location is not None
         self._state.loop_states.append(
             _LoopState(
@@ -482,6 +451,23 @@ class _ParseTreeInterpreter(LarkInterpreter):
             self._jump(loop_state.body_start_location)
         else:
             self._state.loop_states.pop()
+
+    def _unpack_for_statement(self, for_statement: Tree):
+        var_name = for_statement.children[1]
+        from_expr = for_statement.children[3]
+        to_expr = for_statement.children[5]
+        try:
+            step_expr = for_statement.children[7]
+        except IndexError:
+            step_expr = None
+        return var_name, from_expr, to_expr, step_expr
+
+    def _begin_for(self, for_statement: Tree):
+        var_name, from_expr, _, _ = self._unpack_for_statement(for_statement)
+        from_value = self.evaluate_expression(from_expr)
+        if not _is_numeric_basic_value(from_value):
+            raise BasicMistakeError("FOR start value must be numeric", tree=for_statement)
+        self._set_variable(for_statement, var_name, from_value)
 
     def _process_next(self, next_statement: Tree, for_statement: Tree) -> bool:
         index_var_name, _, to_expr, step_expr = self._unpack_for_statement(for_statement)
