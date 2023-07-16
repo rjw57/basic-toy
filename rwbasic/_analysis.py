@@ -41,6 +41,7 @@ class ProgramAnalysisVisitor(Visitor):
     class _ControlFlowBlockType(enum.Enum):
         IF_THEN = enum.auto()
         FOR_NEXT = enum.auto()
+        REPEAT_UNTIL = enum.auto()
 
     @dataclasses.dataclass
     class _ControlFlowBlockState:
@@ -123,6 +124,31 @@ class ProgramAnalysisVisitor(Visitor):
                 raise BasicBadProgramError(
                     f"Unexpected NEXT variable name: {tree.children[1]}", tree=tree
                 )
+
+        assert block_state.entry_location is not None
+        self.analysis.loop_definitions_and_bodies[self._current_location] = (
+            block_state.definition_statement,
+            block_state.entry_location,
+        )
+
+    def repeat_statement(self, tree: Tree):
+        self._control_flow_block_stack.append(
+            ProgramAnalysisVisitor._ControlFlowBlockState(
+                block_type=ProgramAnalysisVisitor._ControlFlowBlockType.REPEAT_UNTIL,
+                definition_statement=tree,
+                definition_location=self._current_location,
+                entry_location=self._location_following_current(),
+            )
+        )
+
+    def until_statement(self, tree: Tree):
+        try:
+            block_state = self._control_flow_block_stack.pop()
+        except IndexError:
+            raise BasicBadProgramError("UNTIL without matching REPEAT", tree=tree)
+
+        if block_state.block_type != ProgramAnalysisVisitor._ControlFlowBlockType.REPEAT_UNTIL:
+            raise BasicBadProgramError("UNTIL within unclosed non-REPEAT block", tree=tree)
 
         assert block_state.entry_location is not None
         self.analysis.loop_definitions_and_bodies[self._current_location] = (

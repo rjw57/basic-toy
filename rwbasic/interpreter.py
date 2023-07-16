@@ -377,6 +377,31 @@ class _ParseTreeInterpreter(LarkInterpreter):
             return True
         return False
 
+    # REPEAT... UNTIL loops
+
+    def inline_repeat_statement(self, tree: Tree):
+        body_statements = tree.children[1:-1]
+        until_statement = tree.children[-1]
+
+        while True:
+            self._execute_inline_statements(body_statements)
+            if not self._process_until(until_statement):
+                break
+
+    def until_statement(self, tree: Tree):
+        assert self._execution_location is not None
+        _, jump_loc = self._program_analysis.loop_definitions_and_bodies[self._execution_location]
+        if self._process_until(tree):
+            self._jump(jump_loc)
+
+    def _process_until(self, until_statement: Tree):
+        "Returns True if the loop should continue."
+        condition_expr = until_statement.children[1]
+        condition_value = self._evaluate_expression_tree(condition_expr)
+        if not is_numeric_basic_value(condition_value):
+            raise BasicMistakeError("UNTIL conditions must be numeric", tree=condition_expr)
+        return condition_value == 0
+
     # Other statements
 
     def print_statement(self, tree: Tree):
