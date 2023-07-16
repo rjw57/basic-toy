@@ -1,5 +1,6 @@
 import dataclasses
 import enum
+import itertools
 import sys
 import typing
 from functools import cache
@@ -108,6 +109,7 @@ class _ExecutionLocation:
 class _NumberedLine:
     number: int
     statements: list[Tree]
+    source: str
 
 
 class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
@@ -136,6 +138,9 @@ class _ProgramAnalysis:
 
 @dataclasses.dataclass
 class _InterpreterState:
+    # Source code which was last parsed.
+    source: str = ""
+
     # Mapping from variable name to current value.
     variables: dict[str, BasicValue] = dataclasses.field(default_factory=dict)
 
@@ -318,6 +323,9 @@ class _ParseTreeInterpreter(LarkInterpreter):
         assert _is_basic_value(value)
         return value
 
+    def _write_output(self, text: str):
+        sys.stdout.write(text)
+
     def _execute_inline_statements(self, statements: list[Tree]):
         """
         Execute a list of statements. Must only be called if we're evaluating statements from the
@@ -371,9 +379,18 @@ class _ParseTreeInterpreter(LarkInterpreter):
                 "Line numbers must be greater than zero", tree=line_statements
             )
 
+        # Extract the source for the statements.
+        line_source = (
+            self._state.source[line_statements.meta.start_pos : line_statements.meta.end_pos + 1]
+            if len(line_statements.children) > 0
+            else ""
+        )
+
         # We store the individual statement trees as the line content. We replace any existing
         # lines with the same line number.
-        new_line = _NumberedLine(number=line_number, statements=line_statements.children)
+        new_line = _NumberedLine(
+            number=line_number, statements=line_statements.children, source=line_source
+        )
         insert_index = self._state.lines.bisect_key_left(new_line.number)
         if (
             len(self._state.lines) > insert_index
@@ -394,6 +411,19 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
     def new_statement(self, tree: Tree):
         self._state.reset()
+
+    def list_statement(self, tree: Tree):
+        if len(self._state.lines) == 0:
+            return
+        max_line_no = self._state.lines[-1].number
+        num_len = len(f"{max_line_no}")
+        for line in self._state.lines:
+            self._write_output(f"{str(line.number).rjust(num_len)} {line.source}\n")
+
+    def renumber_statement(self, tree: Tree):
+        # TODO: if GOTO and friends make an appearance, we'll need some smarts here.
+        for new_number, line in zip(itertools.count(10, 10), self._state.lines):
+            line.number = new_number
 
     def run_statement(self, tree: Tree):
         # Nothing to do if there is no program.
@@ -569,22 +599,22 @@ class _ParseTreeInterpreter(LarkInterpreter):
                 separator = " "
 
             value = self.evaluate_expression(item_expression)
-            sys.stdout.write(f"{value}")
+            self._write_output(f"{value}")
             match separator:
                 case "'":
-                    sys.stdout.write("\n")
+                    self._write_output("\n")
                 case ";" | " ":
                     pass  # no-op separator
                 case ",":
                     # FIXME: we don't properly support the column alignment separator "," yet.
-                    sys.stdout.write(" ")
+                    self._write_output(" ")
                 case _:  # pragma: no cover
                     raise InternalParserError(
                         f"Unknown print item separator: {separator!r}", tree=tree
                     )
 
         if separator != ";":
-            sys.stdout.write("\n")
+            self._write_output("\n")
 
     def let_statement(self, tree: Tree):
         variable_name = tree.children[-3]
@@ -750,9 +780,11 @@ class Interpreter:
 
     def _parse(self, input_text: str, **kwargs) -> Tree:
         try:
-            return load_parser().parse(input_text, **kwargs)
+            tree = load_parser().parse(input_text, **kwargs)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception)) from lark_exception
+        self._state.source = input_text
+        return tree
 
     def load_program(self, program: str):
         self.execute("NEW")

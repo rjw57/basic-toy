@@ -39,6 +39,8 @@ def test_mistake_when_loading(interpreter: Interpreter, program: str):
         # Interactive statements in a program.
         "10RUN",
         "10NEW",
+        "10LIST",
+        "10RENUMBER",
     ],
 )
 def test_syntax_error_when_loading(interpreter: Interpreter, program: str):
