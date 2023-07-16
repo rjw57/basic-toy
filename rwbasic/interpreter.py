@@ -35,7 +35,6 @@ def _load_parser() -> Lark:
         "grammar.lark",
         propagate_positions=True,
         parser="lalr",
-        cache=True,
         start=["program", "promptline", "expression"],
     )
 
@@ -377,6 +376,44 @@ class _ParseTreeInterpreter(LarkInterpreter):
             return True
         return False
 
+    # CASE... ENDCASE
+
+    def case_statement(self, tree: Tree):
+        case_expr = tree.children[1]
+        case_value = self._evaluate_expression_tree(case_expr)
+
+        assert self._execution_location is not None
+        case_whens = self._program_analysis.case_whens[self._execution_location]
+        for when_statement, jump_loc in case_whens:
+            for when_expr in when_statement.children[1:]:
+                when_value = self._evaluate_expression_tree(when_expr)
+                if case_value == when_value:
+                    self._jump(jump_loc)
+                    return
+
+        # No WHENs matched, look for an OTHERWISE.
+        case_otherwise_jump_loc = self._program_analysis.case_otherwises.get(
+            self._execution_location
+        )
+        if case_otherwise_jump_loc is not None:
+            self._jump(case_otherwise_jump_loc)
+            return
+
+        # No match and no OTHERWISE, jump out of the CASE.
+        self._jump(self._program_analysis.case_exit_points[self._execution_location])
+
+    def when_statement(self, tree: Tree):
+        self._exit_case(tree)
+
+    def otherwise_statement(self, tree: Tree):
+        self._exit_case(tree)
+
+    def _exit_case(self, tree: Tree):
+        # If we hit a WHEN or OTHERWISE statement when executing, we must have fallen through from
+        # the case above.
+        assert self._execution_location is not None
+        self._jump(self._program_analysis.case_exit_points[self._execution_location])
+
     # REPEAT... UNTIL loops
 
     def inline_repeat_statement(self, tree: Tree):
@@ -441,7 +478,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             if (
                 item_index < len(tree.children)
                 and isinstance(tree.children[item_index], Token)
-                and tree.children[item_index].type == "PRINT_ITEM_SEPARATOR"
+                and tree.children[item_index].type in {"COMMA", "SEMICOLON", "APOSTROPHE"}
             ):
                 separator = tree.children[item_index]
                 item_index += 1

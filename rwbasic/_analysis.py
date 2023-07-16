@@ -47,12 +47,31 @@ class ProgramAnalysis:
         default_factory=dict
     )
 
+    # For CASE statements, map the location of the case statement to a list of WHEN statements and
+    # their entry point locations.
+    case_whens: dict[ExecutionLocation, list[tuple[Tree, ExecutionLocation]]] = dataclasses.field(
+        default_factory=dict
+    )
+
+    # For CASE statements with OTHERWISEs, map the location of the case statement to the
+    # OTHERWISE's entry point location.
+    case_otherwises: dict[ExecutionLocation, ExecutionLocation] = dataclasses.field(
+        default_factory=dict
+    )
+
+    # For CASE statements, map the location of the case statement and each when/otherwise statement
+    # to the exit point location.
+    case_exit_points: dict[ExecutionLocation, ExecutionLocation] = dataclasses.field(
+        default_factory=dict
+    )
+
 
 class _ControlFlowType(enum.Enum):
     IF_THEN = enum.auto()
     FOR_NEXT = enum.auto()
     REPEAT_UNTIL = enum.auto()
     WHILE_WEND = enum.auto()
+    CASE_OF = enum.auto()
 
 
 @dataclasses.dataclass
@@ -240,3 +259,50 @@ class ProgramAnalysisVisitor(Visitor):
             self.analysis.if_jump_targets[
                 if_block.definition_location
             ] = self._location_following_current()
+
+    def case_statement(self, tree: Tree):
+        self._push_new_flow(tree, _ControlFlowType.CASE_OF)
+
+    def when_statement(self, tree: Tree):
+        self._when_or_otherwise_statement(tree)
+
+    def otherwise_statement(self, tree: Tree):
+        self._when_or_otherwise_statement(tree)
+
+    def _when_or_otherwise_statement(self, tree: Tree):
+        flow = self._peek_flow(tree, _ControlFlowType.CASE_OF)
+        flow.blocks.append(
+            _Block(
+                definition_statement=tree,
+                definition_location=self._current_location,
+                entry_location=self._location_following_current(),
+            )
+        )
+
+    def endcase_statement(self, tree: Tree):
+        flow = self._pop_flow(tree, _ControlFlowType.CASE_OF)
+
+        assert len(flow.blocks) > 0
+        case_block = flow.blocks[0]
+        when_blocks = [b for b in flow.blocks if b.definition_statement.children[0].type == "WHEN"]
+        otherwise_blocks = [
+            b for b in flow.blocks if b.definition_statement.children[0].type == "OTHERWISE"
+        ]
+
+        if len(otherwise_blocks) > 1:
+            raise BasicBadProgramError(
+                "Multiple OTHERWISE in CASE", tree=flow.blocks[-1].definition_statement
+            )
+        elif len(otherwise_blocks) == 1:
+            self.analysis.case_otherwises[case_block.definition_location] = otherwise_blocks[
+                0
+            ].entry_location
+
+        self.analysis.case_whens[case_block.definition_location] = [
+            (when_block.definition_statement, when_block.entry_location)
+            for when_block in when_blocks
+        ]
+
+        exit_point_location = self._location_following_current()
+        for block in flow.blocks:
+            self.analysis.case_exit_points[block.definition_location] = exit_point_location
