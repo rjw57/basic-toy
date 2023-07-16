@@ -64,7 +64,8 @@ COMMENT: REM /[^\r\n]/*
 PRINT_ITEM_SEPARATOR: SEMICOLON | COMMA | APOSTROPHE
 
 // A program definition
-program: (program_line NEWLINE)* program_line
+program: shebang_line? (program_line NEWLINE)* program_line
+shebang_line: /#!.*/ NEWLINE
 ?program_line: numbered_line_definition | unnumbered_line_definition
 unnumbered_line_definition: line_definition_statements
 numbered_line_definition: DECIMAL_LITERAL line_definition_statements

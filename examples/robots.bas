@@ -1,3 +1,4 @@
+#!/usr/bin/env rwbasic
 FOR N%=1 TO 10
   IF N% = 1 THEN
     PRINT "There is ";
