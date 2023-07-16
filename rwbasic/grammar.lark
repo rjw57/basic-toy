@@ -58,6 +58,8 @@ STEP: "STEP"i
 THEN: "THEN"i
 TO: "TO"i
 UNTIL: "UNTIL"i
+WEND: "WEND"i
+WHILE: "WHILE"i
 
 COMMENT: /REM[^\n]*/i
 SHEBANG_LINE: /#![^\n]*/
@@ -89,6 +91,8 @@ line_definition_statements: (line_definition_initial_statement ":")? \
                           | next_statement
                           | repeat_statement
                           | until_statement
+                          | while_statement
+                          | wend_statement
 
 // Statements which can appear in line definitions but only at the start
 ?line_definition_initial_statement: else_statement
@@ -111,6 +115,7 @@ line_definition_statements: (line_definition_initial_statement ":")? \
           | inline_for_statement
           | inline_if_statement
           | inline_repeat_statement
+          | inline_while_statement
 
 // Prompt-only statements
 run_statement: RUN
@@ -132,10 +137,13 @@ else_statement: ELSE
 endif_statement: ENDIF
 repeat_statement: REPEAT
 until_statement: UNTIL expression
+while_statement: WHILE expression
+wend_statement: WEND
 
 // Inline loops, can appear in prompt lines or programs but covers only one line.
 inline_for_statement: for_statement ":" (statement ":")* next_statement
 inline_repeat_statement: repeat_statement ":" (statement ":")* until_statement
+inline_while_statement: while_statement ":" (statement ":")* wend_statement
 
 // Inline IF statement, can appear in prompt lines or programs but covers only one line.
 inline_if_statement: inline_if_header inline_statement_block (ELSE inline_statement_block)?

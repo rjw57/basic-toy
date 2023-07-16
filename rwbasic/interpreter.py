@@ -402,6 +402,34 @@ class _ParseTreeInterpreter(LarkInterpreter):
             raise BasicMistakeError("UNTIL conditions must be numeric", tree=condition_expr)
         return condition_value == 0
 
+    # WHILE... WEND loops
+
+    def while_statement(self, tree: Tree):
+        assert self._execution_location is not None
+        exit_loc = self._program_analysis.while_exit_locations[self._execution_location]
+        if not self._process_while_statement(tree):
+            self._jump(exit_loc)
+
+    def wend_statement(self, tree: Tree):
+        assert self._execution_location is not None
+        while_loc = self._program_analysis.wend_while_locations[self._execution_location]
+        self._jump(while_loc)
+
+    def inline_while_statement(self, tree: Tree):
+        while_statement = tree.children[0]
+        body_statements = tree.children[1:-1]
+
+        while self._process_while_statement(while_statement):
+            self._execute_inline_statements(body_statements)
+
+    def _process_while_statement(self, while_statement: Tree) -> bool:
+        "Return True if the while body should be entered."
+        condition_expr = while_statement.children[1]
+        condition_value = self._evaluate_expression_tree(condition_expr)
+        if not is_numeric_basic_value(condition_value):
+            raise BasicMistakeError("WHILE conditions must be numeric", tree=condition_expr)
+        return condition_value != 0
+
     # Other statements
 
     def print_statement(self, tree: Tree):
