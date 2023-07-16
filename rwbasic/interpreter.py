@@ -25,7 +25,7 @@ BasicValue = typing.Union[int32, float, str]
 
 
 @cache
-def load_parser() -> Lark:
+def _load_parser() -> Lark:
     return Lark.open_from_package(
         __package__,
         "grammar.lark",
@@ -764,7 +764,7 @@ class Interpreter:
 
     def _parse(self, input_text: str, **kwargs) -> Tree:
         try:
-            tree = load_parser().parse(input_text, **kwargs)
+            tree = _load_parser().parse(input_text, **kwargs)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception)) from lark_exception
         self._state.source = input_text
