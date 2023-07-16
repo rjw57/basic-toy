@@ -20,19 +20,28 @@ STRING_LITERAL: "\"" (/[^"]/ | "\"\"")* "\""
 // Variable reference. Low priority so we prefer matching terminals like TRUE and FALSE first.
 VARIABLE.-1: LETTER (LETTER | DIGIT)* ("$" | "%")?
 
+// Punctuation
+EQUALS: "="
+SEMICOLON: ";"
+APOSTROPHE: "'"
+COMMA: ","
+
+// Operators
 POWEROP: "^"
 MULOP: "*" | "/"
 ADDOP: "+" | "-"
-EQUALS: "="
 COMPOP: "<>" | "<" | ">" | "<=" | ">=" | "<<" | ">>" | ">>>"
 
 // Keywords.
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
 AND: "AND"i
 DIV: "DIV"i
+ELSE: "ELSE"i
 END: "END"i
+ENDIF: "ENDIF"i
 EOR: "EOR"i
 FOR: "FOR"i
+IF: "IF"i
 LET: "LET"i
 MOD: "MOD"i
 NEW: "NEW"i
@@ -43,13 +52,14 @@ PRINT: "PRINT"i
 REM: "REM"i
 RUN: "RUN"i
 STEP: "STEP"i
+THEN: "THEN"i
 TO: "TO"i
 
 // Comment. Will match to end of line including any ":" characters.
 COMMENT: REM /[^\r\n]/*
 
 // Print formatting
-PRINT_ITEM_SEPARATOR: ";" | "," | "'"
+PRINT_ITEM_SEPARATOR: SEMICOLON | COMMA | APOSTROPHE
 
 // A program definition
 program: (program_line NEWLINE)* program_line
@@ -80,6 +90,7 @@ prompt_line_statements: (prompt_line_statement ":")* prompt_line_statement?
           | print_statement
           | let_statement
           | inline_for_statement
+          | inline_if_statement
 
 comment_statement: COMMENT
 print_statement: PRINT (expression+ PRINT_ITEM_SEPARATOR)* expression*
@@ -92,6 +103,11 @@ next_statement: NEXT VARIABLE?
 
 // Inline FOR loop, can appear in prompt lines or programs but covers only one line.
 inline_for_statement: for_statement ":" (statement ":")* next_statement
+
+// Inline IF statement, can appear in prompt lines or programs but covers only one line.
+inline_if_statement: inline_if_header inline_statement_block (ELSE inline_statement_block)?
+inline_if_header: IF expression THEN?
+inline_statement_block: (statement ":")* statement
 
 // Expressions
 ?andop: AND

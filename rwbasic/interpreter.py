@@ -379,6 +379,25 @@ class _ParseTreeInterpreter(LarkInterpreter):
             step_expr = None
         return var_name, from_expr, to_expr, step_expr
 
+    def inline_if_statement(self, tree: Tree):
+        if_header = tree.children[0]
+        then_block = tree.children[1]
+        try:
+            else_block = tree.children[3]
+        except IndexError:
+            else_block = None
+
+        condition_expr = if_header.children[1]
+        condition_value = self.evaluate_expression(condition_expr)
+
+        if not _is_numeric_basic_value(condition_value):
+            raise BasicMistakeError("IF conditions must be numeric", tree=condition_expr)
+
+        if condition_value != 0:
+            self._execute_inline_statements(then_block.children)
+        elif else_block is not None:
+            self._execute_inline_statements(else_block.children)
+
     def inline_for_statement(self, tree: Tree):
         loop_defn = tree.children[0]
         statements = tree.children[1:-1]
