@@ -58,7 +58,7 @@ THEN: "THEN"i
 TO: "TO"i
 
 // Comment. Will match to end of line including any ":" characters.
-COMMENT: REM /[^\r\n]/*
+COMMENT: REM /.*/
 
 // Print formatting
 PRINT_ITEM_SEPARATOR: SEMICOLON | COMMA | APOSTROPHE
