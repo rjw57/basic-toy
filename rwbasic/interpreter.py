@@ -115,21 +115,6 @@ class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
         super().__init__(iterable=iterable, key=lambda nl: nl.number)
 
 
-class _LoopType(enum.Enum):
-    FOR_NEXT = enum.auto()
-
-
-@dataclasses.dataclass
-class _LoopState:
-    loop_type: _LoopType
-
-    # Statement defining loop.
-    loop_statement: Tree
-
-    # Location of start of loop body.
-    body_start_location: _ExecutionLocation
-
-
 @dataclasses.dataclass
 class _ProgramAnalysis:
     # Mapping from IF statement locations to locations to jump to if condition *NOT* met.
