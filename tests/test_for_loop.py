@@ -9,6 +9,7 @@ from rwbasic.interpreter import BasicMistakeError, Interpreter
         ("FOR I%=1TO3:PRINT I%;:NEXT", "123"),
         ("FOR I%=1TO9STEP3:PRINT I%;:NEXT", "147"),
         ("FOR I%=9TO1STEP-3:PRINT I%;:NEXT", "963"),
+        ("FOR I%=9TO1:PRINT I%;:NEXT", "9"),  # For loop always executes at least once
     ],
 )
 def test_expected_output(interpreter: Interpreter, line: str, expected_output: str, capsys):
