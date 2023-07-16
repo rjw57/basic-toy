@@ -52,45 +52,31 @@ class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
         super().__init__(iterable=iterable, key=lambda nl: nl.number)
 
 
-@dataclasses.dataclass
-class _InterpreterState:
+class _ParseTreeInterpreter(LarkInterpreter):
     # Source code which was last parsed.
-    source: str = ""
+    _source: str
 
     # Mapping from variable name to current value.
-    variables: dict[str, BasicValue] = dataclasses.field(default_factory=dict)
+    _variables: dict[str, BasicValue]
 
     # Lines which make up the current program.
-    lines: _SortedNumberedLineList = dataclasses.field(default_factory=_SortedNumberedLineList)
+    _lines: _SortedNumberedLineList
 
     # Current execution location or None if we're not executing at the moment.
-    execution_location: typing.Optional[ExecutionLocation] = None
+    _execution_location: typing.Optional[ExecutionLocation]
 
     # Execution location for next statement or None if we should stop execution.
-    next_execution_location: typing.Optional[ExecutionLocation] = None
+    _next_execution_location: typing.Optional[ExecutionLocation]
 
     # Analysis of the current program.
-    program_analysis: ProgramAnalysis = dataclasses.field(default_factory=ProgramAnalysis)
+    _program_analysis: ProgramAnalysis
 
-    def reset(self):
-        """Reset state to defaults."""
-        self.variables = dict()
-        self.lines = _SortedNumberedLineList()
-        self.execution_location = None
-        self.next_execution_location = None
-        self.program_analysis = ProgramAnalysis()
-
-
-class _ParseTreeInterpreter(LarkInterpreter):
-    _state: _InterpreterState
+    # Transformer used to evaluate expressions.
     _expression_transformer: ExpressionTransformer
 
     def __init__(self):
-        super().__init__()
-        self._state = _InterpreterState()
-        self._expression_transformer = ExpressionTransformer(
-            variable_fetcher=lambda v: self._state.variables[v]
-        )
+        self._reset()
+        self._expression_transformer = ExpressionTransformer(variable_fetcher=self._get_variable)
 
     def evaluate_expression(self, expression: str) -> BasicValue:
         """
@@ -98,6 +84,27 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
         """
         return self._evaluate_expression_tree(self._parse(expression, start="expression"))
+
+    def execute_prompt_line(self, prompt_line: str):
+        self.visit(self._parse(prompt_line, start="promptline"))
+
+    def load_program(self, program_source: str):
+        self.execute_prompt_line("NEW")
+        self.visit(self._parse(program_source, start="program"))
+
+    def _reset(self):
+        """Reset state to defaults."""
+        self._variables = dict()
+        self._lines = _SortedNumberedLineList()
+        self._execution_location = None
+        self._next_execution_location = None
+        self._program_analysis = ProgramAnalysis()
+
+    def _get_variable(self, tree: Tree, var_name: str) -> BasicValue:
+        try:
+            return self._variables[var_name]
+        except KeyError as e:
+            raise BasicMistakeError(f"Unknown variable: {var_name}", tree=tree) from e
 
     def _evaluate_expression_tree(self, expression: Tree) -> BasicValue:
         try:
@@ -107,13 +114,6 @@ class _ParseTreeInterpreter(LarkInterpreter):
         assert is_basic_value(value)
         return value
 
-    def execute_prompt_line(self, prompt_line: str):
-        self.visit(self._parse(prompt_line, start="promptline"))
-
-    def load_program(self, program_source: str):
-        self.execute_prompt_line("NEW")
-        self.visit(self._parse(program_source, start="program"))
-
     def _write_output(self, text: str):
         sys.stdout.write(text)
 
@@ -122,7 +122,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             tree = _load_parser().parse(input_text, **kwargs)
         except UnexpectedInput as lark_exception:
             raise BasicSyntaxError(str(lark_exception)) from lark_exception
-        self._state.source = input_text
+        self._source = input_text
         return tree
 
     def _execute_inline_statements(self, statements: list[Tree]):
@@ -139,7 +139,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         When RUN-ing a program, jump to a new location.
 
         """
-        self._state.next_execution_location = location
+        self._next_execution_location = location
 
     def _set_variable(self, tree: Tree, variable_name: str, value: BasicValue):
         """
@@ -154,22 +154,22 @@ class _ParseTreeInterpreter(LarkInterpreter):
         if variable_name.endswith("%"):
             # Ensure we only assign numbers to integer variables.
             value = int32(value)
-        self._state.variables[variable_name] = value
+        self._variables[variable_name] = value
 
     # Program definition
 
     def numbered_line_definition(self, tree: Tree):
         line_number = int(tree.children[0])
-        if len(self._state.lines) > 0 and line_number <= self._state.lines[-1].number:
+        if len(self._lines) > 0 and line_number <= self._lines[-1].number:
             raise BasicBadProgramError("Line numbers must increase in programs", tree=tree)
         self._add_line_definition(line_number, tree.children[1])
 
     def unnumbered_line_definition(self, tree: Tree):
         # Unnumbered lines in programs get numbered automagically.
-        if len(self._state.lines) == 0:
+        if len(self._lines) == 0:
             line_number = 1
         else:
-            line_number = self._state.lines[-1].number + 1
+            line_number = self._lines[-1].number + 1
         self._add_line_definition(line_number, tree.children[0])
 
     def _add_line_definition(self, line_number: int, line_statements: Tree):
@@ -180,7 +180,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
         # Extract the source for the statements.
         line_source = (
-            self._state.source[line_statements.meta.start_pos : line_statements.meta.end_pos + 1]
+            self._source[line_statements.meta.start_pos : line_statements.meta.end_pos + 1]
             if len(line_statements.children) > 0
             else ""
         ).rstrip()
@@ -190,16 +190,13 @@ class _ParseTreeInterpreter(LarkInterpreter):
         new_line = _NumberedLine(
             number=line_number, statements=line_statements.children, source=line_source
         )
-        insert_index = self._state.lines.bisect_key_left(new_line.number)
-        if (
-            len(self._state.lines) > insert_index
-            and self._state.lines[insert_index].number == line_number
-        ):
-            del self._state.lines[insert_index]
+        insert_index = self._lines.bisect_key_left(new_line.number)
+        if len(self._lines) > insert_index and self._lines[insert_index].number == line_number:
+            del self._lines[insert_index]
 
         # Don't add blank lines. This lets one "delete" lines by adding black ones in.
         if line_source != "":
-            self._state.lines.add(new_line)
+            self._lines.add(new_line)
 
     # Prompt line statements
 
@@ -212,40 +209,40 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._add_line_definition(line_number, tree.children[1])
 
     def new_statement(self, tree: Tree):
-        self._state.reset()
+        self._reset()
 
     def list_statement(self, tree: Tree):
-        if len(self._state.lines) == 0:
+        if len(self._lines) == 0:
             return
-        max_line_no = self._state.lines[-1].number
+        max_line_no = self._lines[-1].number
         num_len = len(f"{max_line_no}")
-        for line in self._state.lines:
+        for line in self._lines:
             self._write_output(f"{str(line.number).rjust(num_len)} {line.source}\n")
 
     def renumber_statement(self, tree: Tree):
         # TODO: if GOTO and friends make an appearance, we'll need some smarts here.
-        for new_number, line in zip(itertools.count(10, 10), self._state.lines):
+        for new_number, line in zip(itertools.count(10, 10), self._lines):
             line.number = new_number
 
     def run_statement(self, tree: Tree):
         # Nothing to do if there is no program.
-        if len(self._state.lines) == 0:
+        if len(self._lines) == 0:
             return
 
         # Start at first line
-        self._state.execution_location = ExecutionLocation(line_index=0, statement_index=0)
+        self._execution_location = ExecutionLocation(line_index=0, statement_index=0)
 
         # Analyse program loops, etc.
         analysis_visitor = ProgramAnalysisVisitor()
-        analysis_visitor.analyse_lines(line.statements for line in self._state.lines)
-        self._state.program_analysis = analysis_visitor.analysis
+        analysis_visitor.analyse_lines(line.statements for line in self._lines)
+        self._program_analysis = analysis_visitor.analysis
 
         # Keep going until we run out of program or the END statement sets the next location to
         # None.
-        while self._state.execution_location is not None:
+        while self._execution_location is not None:
             try:
-                current_line_statements = self._state.lines[
-                    self._state.execution_location.line_index
+                current_line_statements = self._lines[
+                    self._execution_location.line_index
                 ].statements
             except IndexError:
                 # We fell off the bottom of the program, exit the execution loop.
@@ -253,26 +250,26 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
             try:
                 current_statement = current_line_statements[
-                    self._state.execution_location.statement_index
+                    self._execution_location.statement_index
                 ]
             except IndexError:
                 # We fell off the line, move to next line and loop.
-                self._state.execution_location = ExecutionLocation(
-                    line_index=self._state.execution_location.line_index + 1, statement_index=0
+                self._execution_location = ExecutionLocation(
+                    line_index=self._execution_location.line_index + 1, statement_index=0
                 )
                 continue
 
             # Prepare the expected next location to be the following statement.
-            self._state.next_execution_location = ExecutionLocation(
-                line_index=self._state.execution_location.line_index,
-                statement_index=self._state.execution_location.statement_index + 1,
+            self._next_execution_location = ExecutionLocation(
+                line_index=self._execution_location.line_index,
+                statement_index=self._execution_location.statement_index + 1,
             )
 
             # Execute the current statement.
             self.visit(current_statement)
 
             # Move to next location which may have been altered by the statement we just executed.
-            self._state.execution_location = self._state.next_execution_location
+            self._execution_location = self._next_execution_location
 
     # IF... THEN... ELSE
 
@@ -291,15 +288,13 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def if_statement(self, tree: Tree):
         # Skip to ELSE or ENDIF if the condition is not met.
         if not self._test_if_condition(tree):
-            assert self._state.execution_location is not None
-            self._jump(
-                self._state.program_analysis.if_jump_targets[self._state.execution_location]
-            )
+            assert self._execution_location is not None
+            self._jump(self._program_analysis.if_jump_targets[self._execution_location])
 
     def else_statement(self, tree: Tree):
         # Skip this statement. If we're executing it, we fell through from the THEN body.
-        assert self._state.execution_location is not None
-        self._jump(self._state.program_analysis.else_jump_targets[self._state.execution_location])
+        assert self._execution_location is not None
+        self._jump(self._program_analysis.else_jump_targets[self._execution_location])
 
     def _test_if_condition(self, if_header: Tree) -> bool:
         condition_expr = if_header.children[1]
@@ -325,9 +320,9 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._begin_for(tree)
 
     def next_statement(self, tree: Tree):
-        assert self._state.execution_location is not None
-        loop_stmt, jump_loc = self._state.program_analysis.loop_definitions_and_bodies[
-            self._state.execution_location
+        assert self._execution_location is not None
+        loop_stmt, jump_loc = self._program_analysis.loop_definitions_and_bodies[
+            self._execution_location
         ]
         if self._process_next(tree, loop_stmt):
             self._jump(jump_loc)
@@ -369,7 +364,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         else:
             step = int32(1)
 
-        index_value = self._state.variables[index_var_name]
+        index_value = self._variables[index_var_name]
         assert is_numeric_basic_value(index_value)
         next_index = index_value + step
 
@@ -425,7 +420,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._set_variable(tree, variable_name, value)
 
     def end_statement(self, tree: Tree):
-        self._state.next_execution_location = None
+        self._next_execution_location = None
 
 
 class Interpreter:

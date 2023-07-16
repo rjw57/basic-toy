@@ -17,9 +17,9 @@ class ExpressionTransformer(Transformer):
     Transformer which evaluates expressions given the current interpreter state.
     """
 
-    _variable_fetcher: typing.Callable[[str], BasicValue]
+    _variable_fetcher: typing.Callable[[Tree, str], BasicValue]
 
-    def __init__(self, variable_fetcher: typing.Callable[[str], BasicValue]):
+    def __init__(self, variable_fetcher: typing.Callable[[Tree, str], BasicValue]):
         self._variable_fetcher = variable_fetcher
 
     def numliteralexpr(self, tree: Tree):
@@ -139,8 +139,4 @@ class ExpressionTransformer(Transformer):
         return rhs
 
     def variablerefexpr(self, tree: Tree):
-        variable_name = tree.children[0]
-        try:
-            return self._variable_fetcher(variable_name)
-        except KeyError:
-            raise BasicMistakeError(f"No such variable: {variable_name}", tree=tree)
+        return self._variable_fetcher(tree, tree.children[0])
