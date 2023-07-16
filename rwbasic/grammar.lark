@@ -53,27 +53,31 @@ PRINT_ITEM_SEPARATOR: ";" | "," | "'"
 
 // A program definition
 program: (program_line NEWLINE)* program_line
-
 ?program_line: numbered_line_definition | unnumbered_line_definition
-
-unnumbered_line_definition: line_statements
+unnumbered_line_definition: line_definition_statements
+numbered_line_definition: DECIMAL_LITERAL line_definition_statements
 
 // Input to the interactive prompt
-?promptline: numbered_line_definition | line_statements
+?promptline: numbered_line_definition | prompt_line_statements
 
-// Define a line via a line number.
-numbered_line_definition: DECIMAL_LITERAL line_statements
+// Statements which can appear in line definitions.
+line_definition_statements: (line_definition_statement ":")* line_definition_statement?
+?line_definition_statement: statement
 
-// Statements within a line.
-line_statements: (statement ":")* statement?
+// Statements which can appear in the prompt line.
+prompt_line_statements: (prompt_line_statement ":")* prompt_line_statement?
+?prompt_line_statement: statement
+                      | new_statement
+                      | run_statement
+
+// Statements within a line which can appear in line definitions or the prompt line.
 ?statement: comment_statement
           | print_statement
           | let_statement
-          | run_statement
-          | new_statement
           | end_statement
           | for_statement
           | next_statement
+
 comment_statement: COMMENT
 print_statement: PRINT (expression+ PRINT_ITEM_SEPARATOR)* expression*
 let_statement: LET? VARIABLE EQUALS expression

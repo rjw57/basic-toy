@@ -306,15 +306,14 @@ class _ParseTreeInterpreter(LarkInterpreter):
             del self._state.lines[insert_index]
         self._state.lines.add(new_line)
 
-    def line_statements(self, tree: Tree):
-        if self._executing_from_prompt:
-            # If we're executing a single prompt line, record this line as the current prompt line.
-            self._state.prompt_line = tree.children
+    def prompt_line_statements(self, tree: Tree):
+        assert self._executing_from_prompt
+        self._state.prompt_line = tree.children
 
-            # If there is at least one statement in the line, start execution.
-            if len(tree.children) > 0:
-                self._state.execution_location = _ExecutionLocation(statement_index=0)
-                self._start_execution()
+        # If there is at least one statement in the line, start execution.
+        if len(tree.children) > 0:
+            self._state.execution_location = _ExecutionLocation(statement_index=0)
+            self._start_execution()
 
     def print_statement(self, tree: Tree):
         item_index = 1
@@ -368,13 +367,11 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._state.variables[variable_name] = value
 
     def new_statement(self, tree: Tree):
-        if not self._executing_from_prompt:
-            raise BasicMistakeError("Cannot NEW when not in interactive prompt.", tree=tree)
+        assert self._executing_from_prompt
         self._state.reset()
 
     def run_statement(self, tree: Tree):
-        if not self._executing_from_prompt:
-            raise BasicMistakeError("Cannot RUN when not in interactive prompt.", tree=tree)
+        assert self._executing_from_prompt
 
         # Nothing to do if there is no program.
         if len(self._state.lines) == 0:
