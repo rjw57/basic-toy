@@ -14,7 +14,8 @@ from prompt_toolkit.styles.pygments import style_from_pygments_cls
 from pygments.lexers.basic import BBCBasicLexer
 from pygments.styles import get_style_by_name
 
-from .interpreter import BasicError, Interpreter
+from .exceptions import BasicError
+from .interpreter import Interpreter
 
 
 class ReplSession:

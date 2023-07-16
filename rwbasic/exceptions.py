@@ -28,3 +28,7 @@ class BasicBadProgramError(BasicError):
     """
     Raised when the program itself is wrongly specified.
     """
+
+
+class InternalInterpreterError(BasicError):
+    pass
