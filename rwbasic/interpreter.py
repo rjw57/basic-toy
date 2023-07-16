@@ -1,4 +1,5 @@
 import dataclasses
+import enum
 import sys
 import typing
 from functools import cache, cached_property
@@ -114,12 +115,19 @@ class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
         super().__init__(iterable=iterable, key=lambda nl: nl.number)
 
 
+class _BlockType(enum.Enum):
+    FOR_LOOP = enum.auto()
+
+
 @dataclasses.dataclass
-class _ForLoopState:
-    variable_name: str
-    to_expression: Tree
-    step_expression: typing.Optional[Tree]
+class _BlockState:
+    block_type: _BlockType
     body_start_location: typing.Optional[_ExecutionLocation]
+
+    # For loops
+    variable_name: typing.Optional[str]
+    to_expression: typing.Optional[Tree]
+    step_expression: typing.Optional[Tree]
 
 
 @dataclasses.dataclass
@@ -140,8 +148,8 @@ class _InterpreterState:
     # Execution location for next statement or None if we should stop execution.
     next_execution_location: typing.Optional[_ExecutionLocation] = None
 
-    # Live FOR loops with inner loop at the end of the list.
-    for_loops: list[_ForLoopState] = dataclasses.field(default_factory=list)
+    # Live blocks. Innermost block is at the end of the list.
+    block_states: list[_BlockState] = dataclasses.field(default_factory=list)
 
     def reset(self):
         """Reset state to defaults."""
@@ -150,7 +158,7 @@ class _InterpreterState:
         self.prompt_line = None
         self.execution_location = None
         self.next_execution_location = None
-        self.for_loops = []
+        self.block_states = []
 
 
 class Interpreter:
@@ -245,8 +253,8 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
                 # If we're about to end, make sure we don't have any dangling loops, etc.
                 if self._state.next_execution_location is None:
-                    if len(self._state.for_loops) > 0:
-                        raise BasicMistakeError("Missing NEXT", tree=current_statement)
+                    if len(self._state.block_states) > 0:
+                        raise BasicMistakeError("Missing block close", tree=current_statement)
 
             # Move to next location.
             self._state.execution_location = self._state.next_execution_location
@@ -399,8 +407,9 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._set_variable(tree, var_name, from_value)
 
         # TODO: do we care about repeated variable names?
-        self._state.for_loops.append(
-            _ForLoopState(
+        self._state.block_states.append(
+            _BlockState(
+                block_type=_BlockType.FOR_LOOP,
                 variable_name=var_name,
                 to_expression=to_expr,
                 step_expression=step_expr,
@@ -409,32 +418,38 @@ class _ParseTreeInterpreter(LarkInterpreter):
         )
 
     def next_statement(self, tree: Tree):
-        if len(self._state.for_loops) == 0:
-            raise BasicMistakeError("NEXT outside of FOR", tree=tree)
+        if len(self._state.block_states) == 0:
+            raise BasicMistakeError("Unexpected NEXT", tree=tree)
 
-        for_loop = self._state.for_loops[-1]
+        block_state = self._state.block_states[-1]
+        if block_state.block_type != _BlockType.FOR_LOOP:
+            raise BasicMistakeError("Inappropriate NEXT for block", tree=tree)
+
+        assert block_state.variable_name is not None
+        assert block_state.to_expression is not None
+
         if len(tree.children) > 1:
             var_name = tree.children[1]
-            if var_name != for_loop.variable_name:
+            if var_name != block_state.variable_name:
                 raise BasicMistakeError(f"Unexpected NEXT variable: {var_name}", tree=tree)
 
-        to_value = self.evaluate_expression(for_loop.to_expression)
+        to_value = self.evaluate_expression(block_state.to_expression)
         if not _is_numeric_basic_value(to_value):
-            raise BasicMistakeError("FOR to value must be numeric", tree=for_loop.to_expression)
+            raise BasicMistakeError("FOR to value must be numeric", tree=block_state.to_expression)
 
-        if for_loop.step_expression is not None:
-            step = self.evaluate_expression(for_loop.step_expression)
+        if block_state.step_expression is not None:
+            step = self.evaluate_expression(block_state.step_expression)
             if not _is_numeric_basic_value(step):
                 raise BasicMistakeError(
-                    "FOR step value must be numeric", tree=for_loop.step_expression
+                    "FOR step value must be numeric", tree=block_state.step_expression
                 )
         else:
             step = int32(1)
 
-        index_value = self._state.variables[for_loop.variable_name]
+        index_value = self._state.variables[block_state.variable_name]
         assert _is_numeric_basic_value(index_value)
         next_index = index_value + step
-        self._set_variable(tree, for_loop.variable_name, next_index)
+        self._set_variable(tree, block_state.variable_name, next_index)
 
         # Do we loop?
         should_loop = False
@@ -444,9 +459,9 @@ class _ParseTreeInterpreter(LarkInterpreter):
             should_loop = True
 
         if should_loop:
-            self._state.next_execution_location = for_loop.body_start_location
+            self._state.next_execution_location = block_state.body_start_location
         else:
-            self._state.for_loops.pop()
+            self._state.block_states.pop()
 
 
 class _ExpressionTransformer(Transformer):
