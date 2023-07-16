@@ -18,10 +18,15 @@ from .exceptions import (
     BasicMistakeError,
     BasicSyntaxError,
 )
+from .values import (
+    BasicValue,
+    basic_bool,
+    is_basic_value,
+    is_numeric_basic_value,
+    is_string_basic_value,
+)
 
-__all__ = ["Interpreter", "BasicValue"]
-
-BasicValue = typing.Union[int32, float, str]
+__all__ = ["Interpreter"]
 
 
 @cache
@@ -40,43 +45,8 @@ def _load_parser() -> Lark:
 _STRING_BINARY_OPS = {"+", "=", "<>", "<", ">", "<=", ">="}
 
 
-class InternalParserError(BasicError):
+class InternalInterpreterError(BasicError):
     pass
-
-
-def _is_integer_basic_value(value: BasicValue) -> typing.TypeGuard[int32]:
-    """
-    Return True if and only if value is an integer BASIC value.
-    """
-    return isinstance(value, int32)
-
-
-def _is_numeric_basic_value(value: BasicValue) -> typing.TypeGuard[typing.Union[int32, float]]:
-    """
-    Return True if and only if value is a numeric BASIC value.
-    """
-    return _is_integer_basic_value(value) or isinstance(value, float)
-
-
-def _is_string_basic_value(value: BasicValue) -> typing.TypeGuard[str]:
-    """
-    Return True if and only if value is a string BASIC value.
-    """
-    return isinstance(value, str)
-
-
-def _is_basic_value(value: BasicValue) -> typing.TypeGuard[BasicValue]:
-    """
-    Return True if and only if value is a BASIC value.
-    """
-    return _is_numeric_basic_value(value) or _is_string_basic_value(value)
-
-
-def _basic_bool(value: bool) -> BasicValue:
-    """
-    Convert a Python boolean into a BASIC boolean.
-    """
-    return int32(-1) if value else int32(0)
 
 
 @dataclasses.dataclass(eq=True, frozen=True)
@@ -163,7 +133,7 @@ class _ExpressionTransformer(Transformer):
         token = tree.children[0]
         match token.type:
             case "BOOLEAN_LITERAL":
-                return _basic_bool(token.upper() == "TRUE")
+                return basic_bool(token.upper() == "TRUE")
             case "BINARY_LITERAL":
                 return int32(int(token[1:], base=2))
             case "HEX_LITERAL":
@@ -173,7 +143,7 @@ class _ExpressionTransformer(Transformer):
             case "FLOAT_LITERAL":
                 return float(token)
             case _:  # pragma: no cover
-                raise InternalParserError("Unexpected literal type", tree=tree)
+                raise InternalInterpreterError("Unexpected literal type", tree=tree)
 
     def strliteralexpr(self, tree: Tree):
         token = tree.children[0]
@@ -185,7 +155,7 @@ class _ExpressionTransformer(Transformer):
         while len(children) > 0:
             op = children.pop().upper()
             # All unary operators need numeric input.
-            if not _is_numeric_basic_value(rhs):
+            if not is_numeric_basic_value(rhs):
                 raise BasicMistakeError(f"Inappropriate type for unary operation {op}", tree=tree)
             match op:
                 case "+":
@@ -195,8 +165,8 @@ class _ExpressionTransformer(Transformer):
                 case "NOT":
                     rhs = int32(rhs ^ uint32(0xFFFFFFFF))
                 case _:  # pragma: no cover
-                    raise InternalParserError(f"Unknown unary operator: {op}", tree=tree)
-        assert _is_numeric_basic_value(rhs)
+                    raise InternalInterpreterError(f"Unknown unary operator: {op}", tree=tree)
+        assert is_numeric_basic_value(rhs)
         return rhs
 
     def powerexpr(self, tree: Tree):
@@ -222,10 +192,10 @@ class _ExpressionTransformer(Transformer):
         rhs = children.pop()
         while len(children) > 0:
             op = children.pop().upper()
-            if op not in _STRING_BINARY_OPS and not _is_numeric_basic_value(rhs):
+            if op not in _STRING_BINARY_OPS and not is_numeric_basic_value(rhs):
                 raise BasicMistakeError(f"Inappropriate type for operation {op}", tree=tree)
             lhs = children.pop()
-            if _is_numeric_basic_value(lhs) != _is_numeric_basic_value(rhs):
+            if is_numeric_basic_value(lhs) != is_numeric_basic_value(rhs):
                 raise BasicMistakeError(f"Cannot mix types for operator {op}", tree=tree)
 
             match op:
@@ -248,17 +218,17 @@ class _ExpressionTransformer(Transformer):
                 case "EOR":
                     rhs = lhs ^ rhs
                 case "=":
-                    rhs = _basic_bool(lhs == rhs)
+                    rhs = basic_bool(lhs == rhs)
                 case "<>":
-                    rhs = _basic_bool(lhs != rhs)
+                    rhs = basic_bool(lhs != rhs)
                 case "<":
-                    rhs = _basic_bool(lhs < rhs)
+                    rhs = basic_bool(lhs < rhs)
                 case ">":
-                    rhs = _basic_bool(lhs > rhs)
+                    rhs = basic_bool(lhs > rhs)
                 case "<=":
-                    rhs = _basic_bool(lhs <= rhs)
+                    rhs = basic_bool(lhs <= rhs)
                 case ">=":
-                    rhs = _basic_bool(lhs >= rhs)
+                    rhs = basic_bool(lhs >= rhs)
                 case "<<":
                     rhs = lhs << rhs
                 case ">>":
@@ -271,8 +241,8 @@ class _ExpressionTransformer(Transformer):
                 case "^":
                     rhs = lhs**rhs
                 case _:  # pragma: no cover
-                    raise InternalParserError(f"Unknown binary operator: {op}", tree=tree)
-        assert _is_basic_value(rhs), f"Non-numeric output: {rhs!r}"
+                    raise InternalInterpreterError(f"Unknown binary operator: {op}", tree=tree)
+        assert is_basic_value(rhs), f"Non-numeric output: {rhs!r}"
         return rhs
 
     def variablerefexpr(self, tree: Tree):
@@ -301,7 +271,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
             value = self._expression_transformer.transform(expression)
         except VisitError as e:
             raise e.orig_exc from e
-        assert _is_basic_value(value)
+        assert is_basic_value(value)
         return value
 
     def _write_output(self, text: str):
@@ -328,10 +298,10 @@ class _ParseTreeInterpreter(LarkInterpreter):
         Set a named variable to a Basic value.
 
         """
-        assert _is_basic_value(value)
-        if variable_name.endswith("$") and not _is_string_basic_value(value):
+        assert is_basic_value(value)
+        if variable_name.endswith("$") and not is_string_basic_value(value):
             raise BasicMistakeError("Cannot assign non-string value to string variable", tree=tree)
-        if not variable_name.endswith("$") and not _is_numeric_basic_value(value):
+        if not variable_name.endswith("$") and not is_numeric_basic_value(value):
             raise BasicMistakeError("Cannot assign non-numeric value to variable", tree=tree)
         if variable_name.endswith("%"):
             # Ensure we only assign numbers to integer variables.
@@ -486,7 +456,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def _test_if_condition(self, if_header: Tree) -> bool:
         condition_expr = if_header.children[1]
         condition_value = self.evaluate_expression(condition_expr)
-        if not _is_numeric_basic_value(condition_value):
+        if not is_numeric_basic_value(condition_value):
             raise BasicMistakeError("IF conditions must be numeric", tree=condition_expr)
         return condition_value != 0
 
@@ -528,7 +498,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         # TODO: do we care about repeated variable names?
         var_name, from_expr, _, _ = self._unpack_for_statement(for_statement)
         from_value = self.evaluate_expression(from_expr)
-        if not _is_numeric_basic_value(from_value):
+        if not is_numeric_basic_value(from_value):
             raise BasicMistakeError("FOR start value must be numeric", tree=for_statement)
         self._set_variable(for_statement, var_name, from_value)
 
@@ -541,18 +511,18 @@ class _ParseTreeInterpreter(LarkInterpreter):
                 )
 
         to_value = self.evaluate_expression(to_expr)
-        if not _is_numeric_basic_value(to_value):
+        if not is_numeric_basic_value(to_value):
             raise BasicMistakeError("FOR to value must be numeric", tree=to_expr)
 
         if step_expr is not None:
             step = self.evaluate_expression(step_expr)
-            if not _is_numeric_basic_value(step):
+            if not is_numeric_basic_value(step):
                 raise BasicMistakeError("FOR step value must be numeric", tree=step_expr)
         else:
             step = int32(1)
 
         index_value = self._state.variables[index_var_name]
-        assert _is_numeric_basic_value(index_value)
+        assert is_numeric_basic_value(index_value)
         next_index = index_value + step
 
         # Do we loop?
@@ -593,7 +563,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
                     # FIXME: we don't properly support the column alignment separator "," yet.
                     self._write_output(" ")
                 case _:  # pragma: no cover
-                    raise InternalParserError(
+                    raise InternalInterpreterError(
                         f"Unknown print item separator: {separator!r}", tree=tree
                     )
 
