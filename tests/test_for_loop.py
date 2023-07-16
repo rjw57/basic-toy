@@ -1,6 +1,11 @@
 import pytest
 
-from rwbasic.interpreter import BasicMistakeError, BasicSyntaxError, Interpreter
+from rwbasic.interpreter import (
+    BasicBadProgramError,
+    BasicMistakeError,
+    BasicSyntaxError,
+    Interpreter,
+)
 
 
 @pytest.mark.parametrize(
@@ -90,6 +95,21 @@ def test_program(interpreter: Interpreter, program: str, expected_output: str, c
 @pytest.mark.parametrize(
     "program",
     [
+        # Non-numeric bounds
+        'FOR I%="one" TO 2\nNEXT I%',
+        'FOR I%=1 TO "two"\nNEXT I%',
+        'FOR I%=1 TO 10 STEP "two"\nNEXT I%',
+    ],
+)
+def test_program_mistake(interpreter: Interpreter, program: str):
+    interpreter.load_program(program)
+    with pytest.raises(BasicMistakeError):
+        interpreter.execute("RUN")
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
         # Missing NEXT
         "FOR I%=1 TO 2\nPRINT I%",
         "FOR I%=1 TO 2",
@@ -99,12 +119,11 @@ def test_program(interpreter: Interpreter, program: str, expected_output: str, c
         "PRINT 5:NEXT",
         # Incorrect NEXT variable
         "FOR I%=1 TO 2\nNEXT J%",
-        # Non-numeric bounds
-        'FOR I%="one" TO 2\nNEXT I%',
-        'FOR I%=1 TO "two"\nNEXT I%',
-        'FOR I%=1 TO 10 STEP "two"\nNEXT I%',
+        # NEXT in IF THEN
+        "FOR I%=1 TO 2\nIF 1 THEN\nNEXT\nENDIF\nNEXT",
     ],
 )
-def test_program_mistake(interpreter: Interpreter, program: str):
-    with pytest.raises(BasicMistakeError):
-        interpreter.load_and_run_program(program)
+def test_bad_program(interpreter: Interpreter, program: str):
+    interpreter.load_program(program)
+    with pytest.raises(BasicBadProgramError):
+        interpreter.execute("RUN")

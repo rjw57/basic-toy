@@ -93,6 +93,9 @@ def test_syntax_error_on_loading(interpreter: Interpreter, program: str):
         "IF 1 THEN\nPRINT 2\nELSE\nPRINT 3\nELSE\nPRINT 4\nENDIF",
         # Unclosed IF
         "IF 1 THEN\nPRINT 2\nELSE\nIF 1 THEN\nPRINT 3\nENDIF",
+        # ENDIF/ELSE in FOR loop
+        "IF 1 THEN\nFOR I%=1 TO 2\nENDIF\nNEXT",
+        "IF 1 THEN\nFOR I%=1 TO 2\nELSE\nPRINT 4\nNEXT",
     ],
 )
 def test_bad_program_on_running(interpreter: Interpreter, program: str):
