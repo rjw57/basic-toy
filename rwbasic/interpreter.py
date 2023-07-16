@@ -29,7 +29,7 @@ def load_parser() -> Lark:
 
 
 # Binary operators which understand string types
-_STRING_BINARY_OPS = {"+", "=", "<>"}
+_STRING_BINARY_OPS = {"+", "=", "<>", "<", ">", "<=", ">="}
 
 
 class BasicError(RuntimeError):
@@ -244,8 +244,6 @@ class _ExpressionTransformer(Transformer):
             lhs = children.pop()
             if _is_numeric_basic_value(lhs) != _is_numeric_basic_value(rhs):
                 raise BasicMistakeError(f"Cannot mix types for operator {op}", tree=tree)
-
-            # TODO: string lexical comparison (e.g. "HI" > "HELLO")
 
             match op:
                 case "+":

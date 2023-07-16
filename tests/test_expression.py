@@ -94,9 +94,15 @@ from rwbasic.interpreter import (
         ("-123>>2", -31),
         ("-123>>>2", (-123) >> 2),
         ('"Hello"="Hello"', -1),
+        ('"Hello"<="Hello"', -1),
+        ('"Hello">="Hello"', -1),
+        ('"Hello"<"Hello"', 0),
+        ('"Hello">"Hello"', 0),
         ('"Hello"<>"Hello"', 0),
         ('"Hello"="World"', 0),
         ('"Hello"<>"World"', -1),
+        ('"Hello"<"World"', -1),
+        ('"Hello">"World"', 0),
         ('"Hello, "+"world"', "Hello, world"),
         # Logical operators
         ("&ff AND &5", 0xFF & 0x5),
@@ -114,7 +120,6 @@ def test_constant_expression(interpreter: Interpreter, expr: str, value: BasicVa
         # Inappropriate types
         '-"hello"',
         '"hello"-"world"',
-        '"hello"<"world"',
         # Mismatched types
         '5+"one"',
         '"one"+5',
