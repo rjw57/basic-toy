@@ -1,5 +1,7 @@
 import runpy
 
+import pytest
+
 from rwbasic.tool import main
 
 
@@ -17,6 +19,7 @@ def test_main(mocker):
     repl_mock.return_value.run.assert_called()
 
 
+@pytest.mark.filterwarnings("ignore:invalid escape sequence:DeprecationWarning")
 def test_load_program(mocker, tmp_path, capsys):
     test_program = tmp_path / "test.bas"
     with open(test_program, "w") as f:
