@@ -13,7 +13,7 @@ class ExecutionLocation:
     # Index of statement within execution line.
     statement_index: int
 
-    # Index of line within the program. None indicates we're executing in the prompt line.
+    # Index of line within the program.
     line_index: int
 
 
