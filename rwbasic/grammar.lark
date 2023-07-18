@@ -18,7 +18,8 @@ FLOAT_LITERAL: DECIMAL_LITERAL _EXPONENT | _FIXED_LITERAL _EXPONENT?
 STRING_LITERAL: "\"" (/[^"]/ | "\"\"")* "\""
 
 // Variable reference. Low priority so we prefer matching terminals like TRUE and FALSE first.
-VARIABLE.-1: LETTER (LETTER | DIGIT)* ("$" | "%")?
+VARLETTER: LETTER | "_" | "@"
+VARIABLE.-1: VARLETTER (VARLETTER | DIGIT)* ("$" | "%")?
 
 // Punctuation
 EQUALS: "="
@@ -36,11 +37,13 @@ COMPOP: "<>" | "<" | ">" | "<=" | ">=" | "<<" | ">>" | ">>>"
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
 AND: "AND"i
 CASE: "CASE"i
+DEF: "DEF"i
 DIV: "DIV"i
 ELSE: "ELSE"i
 END: "END"i
 ENDCASE: "ENDCASE"i
 ENDIF: "ENDIF"i
+ENDPROC: "ENDPROC"i
 ENDWHILE: "ENDWHILE"i
 EOR: "EOR"i
 FOR: "FOR"i
@@ -64,6 +67,8 @@ TO: "TO"i
 UNTIL: "UNTIL"i
 WHEN: "WHEN"i
 WHILE: "WHILE"i
+
+PROCEDURE_NAME: "PROC"i VARLETTER (VARLETTER | DIGIT)*
 
 // #!-style lines on Unix
 shebang_line: /#![^\n]*/
@@ -95,6 +100,8 @@ line_definition_statements: (line_definition_initial_statement ":")? \
                           | until_statement
                           | while_statement
                           | endwhile_statement
+                          | defproc_statement
+                          | endproc_statement
 
 // Statements which can appear in line definitions but only at the start
 ?line_definition_initial_statement: else_statement
@@ -124,6 +131,7 @@ line_definition_statements: (line_definition_initial_statement ":")? \
           | inline_if_statement
           | inline_repeat_statement
           | inline_while_statement
+          | proc_call_statement
 
 // Prompt-only statements
 run_statement: RUN
@@ -151,6 +159,9 @@ case_statement: CASE expression OF
 when_statement: WHEN (expression ",")* expression
 endcase_statement: ENDCASE
 otherwise_statement: OTHERWISE
+defproc_statement: DEF PROCEDURE_NAME ("(" (VARIABLE ",")* VARIABLE ")")?
+endproc_statement: ENDPROC
+proc_call_statement: PROCEDURE_NAME ("(" (expression ",")* expression ")")?
 
 // Inline loops, can appear in prompt lines or programs but covers only one line.
 inline_for_statement: for_statement ":" (statement ":")* next_statement

@@ -51,12 +51,25 @@ class _SortedNumberedLineList(SortedKeyList[_NumberedLine]):
         super().__init__(iterable=iterable, key=lambda nl: nl.number)
 
 
+def _zero_value_for_variable(variable_name: str) -> BasicValue:
+    if variable_name.endswith("%"):
+        return int32(0)
+    elif variable_name.endswith("$"):
+        return ""
+    else:
+        return 0.0
+
+
 class _ParseTreeInterpreter(LarkInterpreter):
     # Source code which was last parsed.
     _source: str
 
     # Mapping from variable name to current value.
     _variables: dict[str, BasicValue]
+
+    # Local variable stack. If a variable name exists in the last entry of the stack, variable
+    # reads and writes should come from here.
+    _local_variable_stack: list[dict[str, BasicValue]]
 
     # Lines which make up the current program.
     _lines: _SortedNumberedLineList
@@ -73,15 +86,14 @@ class _ParseTreeInterpreter(LarkInterpreter):
     # Transformer used to evaluate expressions.
     _expression_transformer: ExpressionTransformer
 
+    # Call return point stack
+    _call_stack: list[ExecutionLocation]
+
     def __init__(self):
         self._reset()
         self._expression_transformer = ExpressionTransformer(variable_fetcher=self._get_variable)
 
     def evaluate_expression(self, expression: str) -> BasicValue:
-        """
-        Evaluate an expression.
-
-        """
         return self._evaluate_expression_tree(self._parse(expression, start="expression"))
 
     def execute_prompt_line(self, prompt_line: str):
@@ -94,12 +106,19 @@ class _ParseTreeInterpreter(LarkInterpreter):
     def _reset(self):
         """Reset state to defaults."""
         self._variables = dict()
+        self._local_variable_stack = []
         self._lines = _SortedNumberedLineList()
         self._execution_location = None
         self._next_execution_location = None
         self._program_analysis = ProgramAnalysis()
+        self._call_stack = []
 
     def _get_variable(self, tree: Tree, var_name: str) -> BasicValue:
+        if len(self._local_variable_stack) > 0:
+            try:
+                return self._local_variable_stack[-1][var_name]
+            except KeyError:
+                pass
         try:
             return self._variables[var_name]
         except KeyError as e:
@@ -153,7 +172,11 @@ class _ParseTreeInterpreter(LarkInterpreter):
         if variable_name.endswith("%"):
             # Ensure we only assign numbers to integer variables.
             value = int32(value)
-        self._variables[variable_name] = value
+
+        if len(self._local_variable_stack) > 0 and variable_name in self._local_variable_stack[-1]:
+            self._local_variable_stack[-1][variable_name] = value
+        else:
+            self._variables[variable_name] = value
 
     # Program definition
 
@@ -467,6 +490,17 @@ class _ParseTreeInterpreter(LarkInterpreter):
             raise BasicMistakeError("WHILE conditions must be numeric", tree=condition_expr)
         return condition_value != 0
 
+    # DEFPROC... ENDPROC
+
+    def defproc_statement(self, tree: Tree):
+        # Skip DEFPROCs when one tries to execute them.
+        assert self._execution_location is not None
+        self._jump(self._program_analysis.proc_or_fun_skip_locations[self._execution_location])
+
+    def endproc_statement(self, tree: Tree):
+        self._local_variable_stack.pop()
+        self._jump(self._call_stack.pop())
+
     # Other statements
 
     def print_statement(self, tree: Tree):
@@ -511,6 +545,28 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
     def end_statement(self, tree: Tree):
         self._next_execution_location = None
+
+    def proc_call_statement(self, tree: Tree):
+        proc_name = tree.children[0]
+
+        try:
+            proc_stmt, entry_loc = self._program_analysis.proc_or_fn_entry_points[proc_name]
+        except KeyError:
+            raise BasicMistakeError(f"No such procedure: {proc_name}")
+
+        proc_arg_names = proc_stmt.children[2:]
+        arg_values = [self._evaluate_expression_tree(v) for v in tree.children[1:]]
+        if len(proc_arg_names) != len(arg_values):
+            raise BasicMistakeError(f"Incorrect number of arguments for {proc_name}", tree=tree)
+
+        self._local_variable_stack.append(dict())
+        for n, v in zip(proc_arg_names, arg_values):
+            self._local_variable_stack[-1][n] = _zero_value_for_variable(n)
+            self._set_variable(tree, n, v)
+
+        assert self._next_execution_location is not None
+        self._call_stack.append(self._next_execution_location)
+        self._jump(entry_loc)
 
 
 class Interpreter:

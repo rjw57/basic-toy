@@ -65,6 +65,16 @@ class ProgramAnalysis:
         default_factory=dict
     )
 
+    # For procedures and functions, map location of DEFs to statement after body.
+    proc_or_fun_skip_locations: dict[ExecutionLocation, ExecutionLocation] = dataclasses.field(
+        default_factory=dict
+    )
+
+    # For procedures and functions, map names to definition statements and entry point locations.
+    proc_or_fn_entry_points: dict[str, tuple[Tree, ExecutionLocation]] = dataclasses.field(
+        default_factory=dict
+    )
+
 
 class _ControlFlowType(enum.Enum):
     IF_THEN = enum.auto()
@@ -72,6 +82,7 @@ class _ControlFlowType(enum.Enum):
     REPEAT_UNTIL = enum.auto()
     WHILE_ENDWHILE = enum.auto()
     CASE_OF = enum.auto()
+    PROC_OR_FN = enum.auto()
 
 
 @dataclasses.dataclass
@@ -306,3 +317,22 @@ class ProgramAnalysisVisitor(Visitor):
         exit_point_location = self._location_following_current()
         for block in flow.blocks:
             self.analysis.case_exit_points[block.definition_location] = exit_point_location
+
+    def defproc_statement(self, tree: Tree):
+        if len(self._control_flow_stack) > 0:
+            raise BasicBadProgramError("DEFPROC inside control flow block", tree=tree)
+        self._push_new_flow(tree, _ControlFlowType.PROC_OR_FN)
+
+    def endproc_statement(self, tree: Tree):
+        flow = self._pop_flow(tree, _ControlFlowType.PROC_OR_FN)
+
+        assert len(flow.blocks) == 1
+        defproc_block = flow.blocks[0]
+        proc_name = defproc_block.definition_statement.children[1]
+        self.analysis.proc_or_fn_entry_points[proc_name] = (
+            defproc_block.definition_statement,
+            defproc_block.entry_location,
+        )
+        self.analysis.proc_or_fun_skip_locations[
+            defproc_block.definition_location
+        ] = self._location_following_current()
