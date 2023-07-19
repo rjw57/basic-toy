@@ -336,3 +336,10 @@ class ProgramAnalysisVisitor(Visitor):
         self.analysis.proc_or_fun_skip_locations[
             defproc_block.definition_location
         ] = self._location_following_current()
+
+    def local_statement(self, tree: Tree):
+        if (
+            len(self._control_flow_stack) == 0
+            or self._control_flow_stack[0].flow_type != _ControlFlowType.PROC_OR_FN
+        ):
+            raise BasicBadProgramError("LOCAL outside of procedure or function", tree=tree)

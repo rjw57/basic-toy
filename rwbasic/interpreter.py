@@ -568,6 +568,11 @@ class _ParseTreeInterpreter(LarkInterpreter):
         self._call_stack.append(self._next_execution_location)
         self._jump(entry_loc)
 
+    def local_statement(self, tree: Tree):
+        assert len(self._local_variable_stack) > 0
+        for var_name in tree.children[1:]:
+            self._local_variable_stack[-1][var_name] = _zero_value_for_variable(var_name)
+
 
 class Interpreter:
     _parse_tree_interpreter: _ParseTreeInterpreter

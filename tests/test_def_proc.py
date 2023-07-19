@@ -20,6 +20,8 @@ from rwbasic.interpreter import Interpreter
             'PRINTJ$:J$="y":PRINTJ$:I%=2:ENDPROC',
             "1\n5\nh\ny\n2\nx\n",
         ),
+        # Local variables
+        ("I%=1:PROCh:PRINTI%:DEFPROCh:LOCALI%:I%=4:PRINTI%:ENDPROC", "4\n1\n"),
     ],
 )
 def test_expected_program_output(
@@ -51,6 +53,9 @@ def test_syntax_error_on_loading(interpreter: Interpreter, program: str):
         "FORI%=1TO2\nDEFPROCa:ENDPROC\nNEXT",
         # Nested DEFPROC
         "DEFPROCa:DEFPROCb:ENDPROC:ENDPROC",
+        # LOCAL outside of procedure.
+        "LOCAL I%",
+        "FORI%=1TO2:LOCAL I%:NEXT",
     ],
 )
 def test_bad_program_on_running(interpreter: Interpreter, program: str):

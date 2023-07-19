@@ -50,6 +50,7 @@ FOR: "FOR"i
 IF: "IF"i
 LET: "LET"i
 LIST: "LIST"i
+LOCAL: "LOCAL"i
 MOD: "MOD"i
 NEW: "NEW"i
 NEXT: "NEXT"i
@@ -132,6 +133,7 @@ line_definition_statements: (line_definition_initial_statement ":")? \
           | inline_repeat_statement
           | inline_while_statement
           | proc_call_statement
+          | local_statement
 
 // Prompt-only statements
 run_statement: RUN
@@ -162,6 +164,7 @@ otherwise_statement: OTHERWISE
 defproc_statement: DEF PROCEDURE_NAME ("(" (VARIABLE ",")* VARIABLE ")")?
 endproc_statement: ENDPROC
 proc_call_statement: PROCEDURE_NAME ("(" (expression ",")* expression ")")?
+local_statement: LOCAL (VARIABLE ",")* VARIABLE
 
 // Inline loops, can appear in prompt lines or programs but covers only one line.
 inline_for_statement: for_statement ":" (statement ":")* next_statement
