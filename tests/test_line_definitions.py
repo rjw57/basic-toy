@@ -11,6 +11,7 @@ from rwbasic.interpreter import Interpreter
     [
         "10 PRINT 1234",
         "123 PRINT 1234:REM print a number",
+        "20:",
     ],
 )
 def test_line_definition(interpreter: Interpreter, line: str, capsys):

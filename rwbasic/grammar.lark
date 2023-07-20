@@ -85,11 +85,11 @@ numbered_line_definition: DECIMAL_LITERAL line_definition_statements
 ?promptline: numbered_line_update
            | prompt_line_statements
 numbered_line_update: DECIMAL_LITERAL line_definition_statements
-prompt_line_statements: (prompt_line_statement ":")* \
+prompt_line_statements: ":"* (prompt_line_statement ":"+)* \
                             (prompt_line_statement | prompt_line_final_statement)?
 
-line_definition_statements: (line_definition_initial_statement ":")? \
-                                (line_definition_statement ":")* \
+line_definition_statements: ":"* (line_definition_initial_statement ":"+)? \
+                                (line_definition_statement ":"+)* \
                                 (line_definition_statement | line_definition_final_statement)?
                           | line_definition_initial_statement
 
@@ -172,9 +172,9 @@ deffn_statement: _DEF FUNCTION_NAME ("(" ((VARIABLE ",")* VARIABLE)? ")")?
 endfn_statement: "=" expression
 
 // Inline loops, can appear in prompt lines or programs but covers only one line.
-inline_for_statement: for_statement ":" (statement ":")* next_statement
-inline_repeat_statement: repeat_statement ":" (statement ":")* until_statement
-inline_while_statement: while_statement ":" (statement ":")* endwhile_statement
+inline_for_statement: for_statement ":"+ (statement ":"+)* next_statement
+inline_repeat_statement: repeat_statement ":"+ (statement ":"+)* until_statement
+inline_while_statement: while_statement ":"+ (statement ":"+)* endwhile_statement
 
 // Inline IF statement, can appear in prompt lines or programs but covers only one line.
 inline_if_statement: inline_if_header inline_statement_block (ELSE inline_statement_block)?
