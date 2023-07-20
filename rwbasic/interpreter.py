@@ -526,9 +526,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
     # DEFPROC... ENDPROC
 
     def defproc_statement(self, tree: Tree):
-        # Skip DEFPROCs when one tries to execute them.
-        assert self._program_analysis is not None
-        self._jump(self._program_analysis.proc_or_fun_skip_locations[self._execution_location])
+        raise BasicMistakeError("Ran into DEFPROC")
 
     def endproc_statement(self, tree: Tree):
         self._local_variable_stack.pop()

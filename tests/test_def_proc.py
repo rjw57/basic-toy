@@ -7,21 +7,24 @@ from rwbasic.interpreter import Interpreter
 @pytest.mark.parametrize(
     "program,expected_output",
     [
-        ("PROCp:PROCp\nDEFPROCp:PRINT1:ENDPROC", "1\n1\n"),
+        ("PROCp:PROCp\nEND\nDEFPROCp:PRINT1:ENDPROC", "1\n1\n"),
         ("PROCx:END:DEFPROCx:ENDPROC:DEFPROCy:PRINT1:ENDPROC", ""),
         ("PROCpr(4):PROCpr(5):END:DEFPROCpr(N):PRINTN:ENDPROC\nPRINT6", "4\n5\n"),
-        # It's OK to skip over procedures.
-        ("PROCpr(4):PROCpr(5):DEFPROCpr(N):PRINTN:ENDPROC:PRINT6", "4\n5\n6\n"),
         # Procedure arguments are local
-        ("I%=1:PROCx(2):PRINTI%:DEFPROCx(I%):PRINTI%:ENDPROC", "2\n1\n"),
+        ("I%=1:PROCx(2):PRINTI%:END:DEFPROCx(I%):PRINTI%:ENDPROC", "2\n1\n"),
         # Can reference global variables
         (
-            'I%=1:J$="x":PRINTI%:PROCx("h"):PRINTI%:PRINTJ$\nDEFPROCx(J$):I%=5:PRINTI%\n'
+            'I%=1:J$="x":PRINTI%:PROCx("h"):PRINTI%:PRINTJ$\nEND\nDEFPROCx(J$):I%=5:PRINTI%\n'
             'PRINTJ$:J$="y":PRINTJ$:I%=2:ENDPROC',
             "1\n5\nh\ny\n2\nx\n",
         ),
         # Local variables
-        ("I%=1:PROCh:PRINTI%:DEFPROCh:LOCALI%:I%=4:PRINTI%:ENDPROC", "4\n1\n"),
+        ("I%=1:PROCh:PRINTI%:END:DEFPROCh:LOCALI%:I%=4:PRINTI%:ENDPROC", "4\n1\n"),
+        # Multiple exits
+        (
+            "PROCx(1):PROCx(2):END:DEFPROCx(N)\nIFN=1THEN\nENDPROC\nELSE\nPRINTN\nENDIF\nENDPROC",
+            "2\n",
+        ),
     ],
 )
 def test_expected_program_output(
@@ -51,8 +54,6 @@ def test_syntax_error_on_loading(interpreter: Interpreter, program: str):
         "PRINT1\nENDPROC",
         # DEFPROC inside loop.
         "FORI%=1TO2\nDEFPROCa:ENDPROC\nNEXT",
-        # Nested DEFPROC
-        "DEFPROCa:DEFPROCb:ENDPROC:ENDPROC",
         # LOCAL outside of procedure.
         "LOCAL I%",
         "FORI%=1TO2:LOCAL I%:NEXT",
@@ -75,6 +76,9 @@ def test_bad_program_on_running(interpreter: Interpreter, program: str):
         "PROCa:DEFPROCa(N):ENDPROC",
         "PROCa(1):DEFPROCa:ENDPROC",
         "PROCa(1,2):DEFPROCa(N):ENDPROC",
+        # Run into DEFPROC
+        "PROCp:PROCp\nDEFPROCp:PRINT1:ENDPROC",
+        "PROCpr(4):PROCpr(5):DEFPROCpr(N):PRINTN:ENDPROC:PRINT6",
     ],
 )
 def test_mistake_on_running(interpreter: Interpreter, program: str):
