@@ -37,7 +37,7 @@ COMPOP: "<>" | "<" | ">" | "<=" | ">=" | "<<" | ">>" | ">>>"
 // TODO: abbreviations, see e.g. https://central.kaserver5.org/Kasoft/Typeset/BBC/Ch47.html
 AND: "AND"i
 CASE: "CASE"i
-DEF: "DEF"i
+_DEF: "DEF"i
 DIV: "DIV"i
 ELSE: "ELSE"i
 END: "END"i
@@ -70,6 +70,7 @@ WHEN: "WHEN"i
 WHILE: "WHILE"i
 
 PROCEDURE_NAME: "PROC"i VARLETTER (VARLETTER | DIGIT)*
+FUNCTION_NAME: "FN"i VARLETTER (VARLETTER | DIGIT)*
 
 // #!-style lines on Unix
 shebang_line: /#![^\n]*/
@@ -103,6 +104,8 @@ line_definition_statements: (line_definition_initial_statement ":")? \
                           | endwhile_statement
                           | defproc_statement
                           | endproc_statement
+                          | deffn_statement
+                          | endfn_statement
 
 // Statements which can appear in line definitions but only at the start
 ?line_definition_initial_statement: else_statement
@@ -161,10 +164,12 @@ case_statement: CASE expression OF
 when_statement: WHEN (expression ",")* expression
 endcase_statement: ENDCASE
 otherwise_statement: OTHERWISE
-defproc_statement: DEF PROCEDURE_NAME ("(" (VARIABLE ",")* VARIABLE ")")?
+defproc_statement: _DEF PROCEDURE_NAME ("(" ((VARIABLE ",")* VARIABLE)? ")")?
 endproc_statement: ENDPROC
-proc_call_statement: PROCEDURE_NAME ("(" (expression ",")* expression ")")?
+proc_call_statement: PROCEDURE_NAME ("(" ((expression ",")* expression)? ")")?
 local_statement: LOCAL (VARIABLE ",")* VARIABLE
+deffn_statement: _DEF FUNCTION_NAME ("(" ((VARIABLE ",")* VARIABLE)? ")")?
+endfn_statement: "=" expression
 
 // Inline loops, can appear in prompt lines or programs but covers only one line.
 inline_for_statement: for_statement ":" (statement ":")* next_statement
@@ -195,6 +200,8 @@ inline_statement_block: (statement ":")* statement
          | numliteralexpr
          | strliteralexpr
          | variablerefexpr
+         | funcorarrayexpr
 numliteralexpr: BOOLEAN_LITERAL | BINARY_LITERAL | DECIMAL_LITERAL | HEX_LITERAL | FLOAT_LITERAL
 strliteralexpr: STRING_LITERAL
+funcorarrayexpr: (VARIABLE | FUNCTION_NAME) "(" ( (expression ",")* expression )? ")"
 variablerefexpr: VARIABLE

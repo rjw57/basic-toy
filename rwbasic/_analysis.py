@@ -334,10 +334,33 @@ class ProgramAnalysisVisitor(Visitor):
             raise BasicBadProgramError("ENDPROC inside DEFFN", tree=tree)
 
         defproc_block = self._most_recent_proc_or_fn
-        proc_name = defproc_block.definition_statement.children[1]
+        proc_name = defproc_block.definition_statement.children[0]
         self.analysis.proc_or_fn_entry_points[proc_name] = (
             defproc_block.definition_statement,
             defproc_block.entry_location,
+        )
+
+    def deffn_statement(self, tree: Tree):
+        if len(self._control_flow_stack) > 0:
+            raise BasicBadProgramError("DEFFN inside control flow block", tree=tree)
+        self._most_recent_proc_or_fn = _Block(
+            definition_statement=tree,
+            definition_location=self._current_location,
+            entry_location=self._location_following_current(),
+        )
+        self._most_recent_proc_or_fn_is_proc = False
+
+    def endfn_statement(self, tree: Tree):
+        if self._most_recent_proc_or_fn is None:
+            raise BasicBadProgramError("Function exit before DEFFN", tree=tree)
+        if self._most_recent_proc_or_fn_is_proc:
+            raise BasicBadProgramError("Function exit inside DEFPROC", tree=tree)
+
+        deffn_block = self._most_recent_proc_or_fn
+        fn_name = deffn_block.definition_statement.children[0]
+        self.analysis.proc_or_fn_entry_points[fn_name] = (
+            deffn_block.definition_statement,
+            deffn_block.entry_location,
         )
 
     def local_statement(self, tree: Tree):

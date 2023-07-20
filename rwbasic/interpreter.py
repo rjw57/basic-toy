@@ -77,6 +77,9 @@ class _ExecutionContext:
     # Why we exited this context
     exit_reason: _ExitReason = _ExitReason.END_REACHED
 
+    # Value we exited this context with. (Used with function calls.)
+    exit_value: typing.Optional[BasicValue] = None
+
 
 class _ParseTreeInterpreter(LarkInterpreter):
     # Source code which was last parsed.
@@ -103,7 +106,9 @@ class _ParseTreeInterpreter(LarkInterpreter):
 
     def __init__(self):
         self._reset()
-        self._expression_transformer = ExpressionTransformer(variable_fetcher=self._get_variable)
+        self._expression_transformer = ExpressionTransformer(
+            variable_fetcher=self._get_variable, function_caller=self._call_function
+        )
 
     def evaluate_expression(self, expression: str) -> BasicValue:
         return self._evaluate_expression_tree(self._parse(expression, start="expression"))
@@ -130,6 +135,29 @@ class _ParseTreeInterpreter(LarkInterpreter):
         analysis_visitor = ProgramAnalysisVisitor()
         analysis_visitor.analyse_lines(line.statements for line in self._lines)
         self._program_analysis = analysis_visitor.analysis
+
+    def _call_function(
+        self, tree: Tree, func_name: str, arguments: list[BasicValue]
+    ) -> BasicValue:
+        if func_name.startswith("FN"):
+            try:
+                assert self._program_analysis is not None
+                fn_stmt, entry_loc = self._program_analysis.proc_or_fn_entry_points[func_name]
+            except KeyError:
+                raise BasicMistakeError(f"No such function: {func_name}", tree=tree)
+            fn_arg_names = fn_stmt.children[1:]
+            if len(fn_arg_names) != len(arguments):
+                raise BasicMistakeError(
+                    f"Incorrect number of arguments for {func_name}", tree=tree
+                )
+
+            self._local_variable_stack.append(dict())
+            for n, v in zip(fn_arg_names, arguments):
+                self._local_variable_stack[-1][n] = _zero_value_for_variable(n)
+                self._set_variable(tree, n, v)
+
+            return self._execute(entry_loc).exit_value
+        raise BasicMistakeError(f"No such function or array: {func_name}", tree=tree)
 
     def _get_variable(self, tree: Tree, var_name: str) -> BasicValue:
         if len(self._local_variable_stack) > 0:
@@ -534,6 +562,18 @@ class _ParseTreeInterpreter(LarkInterpreter):
         context.next_location = None
         context.exit_reason = _ExitReason.PROC_OR_FN_EXIT
 
+    # DEFFN... =...
+
+    def deffn_statement(self, tree: Tree):
+        raise BasicMistakeError("Ran into DEFFN")
+
+    def endfn_statement(self, tree: Tree):
+        context = self._exec_context[-1]
+        context.exit_value = self._evaluate_expression_tree(tree.children[0])
+        self._local_variable_stack.pop()
+        context.next_location = None
+        context.exit_reason = _ExitReason.PROC_OR_FN_EXIT
+
     # Other statements
 
     def print_statement(self, tree: Tree):
@@ -588,7 +628,7 @@ class _ParseTreeInterpreter(LarkInterpreter):
         except KeyError:
             raise BasicMistakeError(f"No such procedure: {proc_name}")
 
-        proc_arg_names = proc_stmt.children[2:]
+        proc_arg_names = proc_stmt.children[1:]
         arg_values = [self._evaluate_expression_tree(v) for v in tree.children[1:]]
         if len(proc_arg_names) != len(arg_values):
             raise BasicMistakeError(f"Incorrect number of arguments for {proc_name}", tree=tree)

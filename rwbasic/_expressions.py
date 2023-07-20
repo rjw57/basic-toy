@@ -18,9 +18,15 @@ class ExpressionTransformer(Transformer):
     """
 
     _variable_fetcher: typing.Callable[[Tree, str], BasicValue]
+    _function_caller: typing.Callable[[Tree, str, list[BasicValue]], BasicValue]
 
-    def __init__(self, variable_fetcher: typing.Callable[[Tree, str], BasicValue]):
+    def __init__(
+        self,
+        variable_fetcher: typing.Callable[[Tree, str], BasicValue],
+        function_caller: typing.Callable[[Tree, str, list[BasicValue]], BasicValue],
+    ):
         self._variable_fetcher = variable_fetcher
+        self._function_caller = function_caller
 
     def numliteralexpr(self, tree: Tree):
         token = tree.children[0]
@@ -140,3 +146,6 @@ class ExpressionTransformer(Transformer):
 
     def variablerefexpr(self, tree: Tree):
         return self._variable_fetcher(tree, tree.children[0])
+
+    def funcorarrayexpr(self, tree: Tree):
+        return self._function_caller(tree, tree.children[0], tree.children[1:])

@@ -9,6 +9,7 @@ from rwbasic.interpreter import Interpreter
     [
         ("PROCp:PROCp\nEND\nDEFPROCp:PRINT1:ENDPROC", "1\n1\n"),
         ("PROCx:END:DEFPROCx:ENDPROC:DEFPROCy:PRINT1:ENDPROC", ""),
+        ("PROCx:PROCy():END:DEFPROCx():PRINT2:ENDPROC:DEFPROCy:PRINT1:ENDPROC", "2\n1\n"),
         ("PROCpr(4):PROCpr(5):END:DEFPROCpr(N):PRINTN:ENDPROC\nPRINT6", "4\n5\n"),
         # Procedure arguments are local
         ("I%=1:PROCx(2):PRINTI%:END:DEFPROCx(I%):PRINTI%:ENDPROC", "2\n1\n"),
@@ -57,6 +58,8 @@ def test_syntax_error_on_loading(interpreter: Interpreter, program: str):
         # LOCAL outside of procedure.
         "LOCAL I%",
         "FORI%=1TO2:LOCAL I%:NEXT",
+        # Function exit from procedure
+        "DEFPROCa\n=4",
     ],
 )
 def test_bad_program_on_running(interpreter: Interpreter, program: str):
