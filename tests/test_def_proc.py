@@ -81,3 +81,18 @@ def test_mistake_on_running(interpreter: Interpreter, program: str):
     interpreter.load_program(program)
     with pytest.raises(BasicMistakeError):
         interpreter.execute("RUN")
+
+
+@pytest.mark.parametrize(
+    "line,expected_output",
+    [
+        ("PROCa(5)", "5\n"),
+        ("FORI%=1TO3:PROCa(I%):NEXT", "1\n2\n3\n"),
+        ("PROCb", "0\n"),
+    ],
+)
+def test_inline_proc_call(interpreter: Interpreter, line: str, expected_output: str, capsys):
+    interpreter.load_program("DEFPROCa(I%)\nPRINTI%\nENDPROC\nDEFPROCb\nPRINT0\nENDPROC")
+    interpreter.execute(line)
+    captured = capsys.readouterr()
+    assert captured.out == expected_output
